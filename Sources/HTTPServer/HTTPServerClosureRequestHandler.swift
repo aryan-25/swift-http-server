@@ -40,9 +40,7 @@ public struct HTTPServerClosureRequestHandler: HTTPServerRequestHandler {
         handler: @Sendable @escaping (
             HTTPRequest,
             consuming HTTPRequestConcludingAsyncReader,
-            @escaping (
-                HTTPResponse
-            ) async throws -> HTTPResponseConcludingAsyncWriter
+            @escaping (HTTPResponse) async throws -> HTTPResponseConcludingAsyncWriter
         ) async throws -> Void
     ) {
         self._handler = handler
@@ -59,9 +57,7 @@ public struct HTTPServerClosureRequestHandler: HTTPServerRequestHandler {
     public func handle(
         request: HTTPRequest,
         requestConcludingAsyncReader: HTTPRequestConcludingAsyncReader,
-        sendResponse: @escaping (
-            HTTPResponse
-        ) async throws -> HTTPResponseConcludingAsyncWriter
+        sendResponse: @escaping (HTTPResponse) async throws -> HTTPResponseConcludingAsyncWriter
     ) async throws {
         try await self._handler(request, requestConcludingAsyncReader, sendResponse)
     }

@@ -16,7 +16,8 @@ struct Example {
     @concurrent
     static func serve() async throws {
         InstrumentationSystem.bootstrap(LogTracer())
-        let logger = Logger(label: "Logger")
+        var logger = Logger(label: "Logger")
+        logger.logLevel = .trace
 
         // Using the new extension method that doesn't require type hints
         let privateKey = P256.Signing.PrivateKey()

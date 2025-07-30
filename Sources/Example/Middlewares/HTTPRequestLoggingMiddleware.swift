@@ -50,9 +50,7 @@ where
             logger: self.logger
         )
         try await next(
-            (
-                request, wrappedReader,
-                { httpResponse in
+            (request, wrappedReader, { httpResponse in
                     let writer = try await respond(httpResponse)
                     return HTTPResponseLoggingConcludingAsyncWriter(
                         base: writer,

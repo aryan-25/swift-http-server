@@ -155,12 +155,8 @@ public final class Server<RequestHandler: HTTPServerRequestHandler> {
         configuration: HTTPServerConfiguration,
         handler: RequestHandler
     ) async throws {
-        let serverChannel = try await Self.bind(
-            bindTarget: configuration.bindTarget
-        ) {
-            (
-                channel
-            ) -> EventLoopFuture<
+        let serverChannel = try await Self.bind(bindTarget: configuration.bindTarget) {
+            (channel) -> EventLoopFuture<
                 EventLoopFuture<
                     NIONegotiatedHTTPVersion<
                         NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>,
@@ -175,10 +171,8 @@ public final class Server<RequestHandler: HTTPServerRequestHandler> {
                 switch configuration.tlSConfiguration.backing {
                 case .insecure:
                     break
-                case .certificateChainAndPrivateKey(
-                    let certificateChain,
-                    let privateKey
-                ):
+
+                case .certificateChainAndPrivateKey(let certificateChain, let privateKey):
                     let certificateChain =
                         try certificateChain
                         .map {
@@ -264,12 +258,12 @@ public final class Server<RequestHandler: HTTPServerRequestHandler> {
                                             }
                                         }
                                     } catch {
-                                        logger.debug("HTTP2 connection closed")
+                                        logger.debug("HTTP2 connection closed: \(error)")
                                     }
                                 }
                             }
                         } catch {
-                            logger.debug("Negotiating ALPN failed")
+                            logger.debug("Negotiating ALPN failed: \(error)")
                         }
                     }
                 }
