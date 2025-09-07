@@ -72,7 +72,7 @@ public final class Server<RequestHandler: HTTPServerRequestHandler> {
     ///   - handler: An async closure that processes HTTP requests. The closure receives:
     ///     - `HTTPRequest`: The incoming HTTP request with headers and metadata
     ///     - `HTTPRequestConcludingAsyncReader`: An async reader for consuming the request body and trailers
-    ///     - A response sender function that accepts an `HTTPResponse` and provides access to an `HTTPResponseConcludingAsyncWriter`
+    ///     - A non-copyable response sender function that accepts an `HTTPResponse` and provides access to an `HTTPResponseConcludingAsyncWriter`
     ///
     /// ## Example
     ///
@@ -98,12 +98,10 @@ public final class Server<RequestHandler: HTTPServerRequestHandler> {
     public static func serve(
         logger: Logger,
         configuration: HTTPServerConfiguration,
-        handler: @escaping @Sendable (
+        handler: @Sendable @escaping (
             HTTPRequest,
-            HTTPRequestConcludingAsyncReader,
-            @escaping (
-                HTTPResponse
-            ) async throws -> HTTPResponseConcludingAsyncWriter
+            consuming HTTPRequestConcludingAsyncReader,
+            consuming HTTPResponseSender<HTTPResponseConcludingAsyncWriter>
         ) async throws -> Void
     ) async throws where RequestHandler == HTTPServerClosureRequestHandler {
         try await self.serve(
@@ -345,17 +343,44 @@ public final class Server<RequestHandler: HTTPServerRequestHandler> {
                         return
                     }
 
-                    try await handler.handle(
-                        request: httpRequest,
-                        requestConcludingAsyncReader: HTTPRequestConcludingAsyncReader(
-                            iterator: iterator
-                        ),
-                        sendResponse: { response in
-                            try await outbound.write(.head(response))
-                            return HTTPResponseConcludingAsyncWriter(writer: outbound)
+                    let readerState = HTTPRequestConcludingAsyncReader.ReaderState()
+                    let writerState = HTTPResponseConcludingAsyncWriter.WriterState()
+
+                    do {
+                        try await handler.handle(
+                            request: httpRequest,
+                            requestConcludingAsyncReader: HTTPRequestConcludingAsyncReader(
+                                iterator: iterator,
+                                readerState: readerState
+                            ),
+                            sendResponse: HTTPResponseSender { response in
+                                try await outbound.write(.head(response))
+                                return HTTPResponseConcludingAsyncWriter(
+                                    writer: outbound,
+                                    writerState: writerState
+                                )
+                            }
+                        )
+                    } catch {
+                        if !readerState.finishedReading {
+                            // TODO: do something - we didn't finish reading but we threw
+                            // if h2 reset stream; if h1 try draining request?
+                            fatalError("Didn't finish reading but threw.")
                         }
-                    )
-                    // TODO: We need to send a response head here potentially
+                        if !writerState.finishedWriting {
+                            // TODO: this means we didn't write a response end and we threw
+                            // we need to do something, possibly just close the connection or
+                            // reset the stream with the appropriate error.
+                            fatalError("Didn't finish writing but threw.")
+                        }
+                    }
+
+                    // TODO: handle other state scenarios.
+                    // For example, if we're using h2 and we didn't finish reading but we wrote back
+                    // a response, we should send a RST_STREAM with NO_ERROR set.
+                    // If we finished reading but we didn't write back a response, then RST_STREAM
+                    // is also likely appropriate but unclear about the error.
+                    // For h1, we should close the connection.
                 }
         } catch {
             logger.debug("Error thrown while handling connection: \(error)")
