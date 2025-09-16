@@ -34,7 +34,7 @@ public protocol ConcludingAsyncReader<Underlying, FinalElement>: ~Copyable {
     /// }
     /// ```
     consuming func consumeAndConclude<Return>(
-        body: (consuming Underlying) async throws -> Return
+        body: (consuming sending Underlying) async throws -> Return
     ) async throws -> (Return, FinalElement)
 }
 
@@ -62,7 +62,7 @@ extension ConcludingAsyncReader where Self: ~Copyable {
     /// }
     /// ```
     public consuming func consumeAndConclude(
-        body: (consuming Underlying) async throws -> Void
+        body: (consuming sending Underlying) async throws -> Void
     ) async throws -> FinalElement {
         let (_, finalElement) = try await self.consumeAndConclude { reader in
             try await body(reader)
