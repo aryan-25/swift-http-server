@@ -24,7 +24,7 @@ public import HTTPTypes
 /// }
 /// ```
 @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-public struct HTTPServerClosureRequestHandler: HTTPServerRequestHandler {
+public struct HTTPServerClosureRequestHandler<ConcludingRequestReader: ~Copyable, ConcludingResponseWriter: ~Copyable>: HTTPServerRequestHandler {
     /// The underlying closure that handles HTTP requests
     private let _handler:
         nonisolated(nonsending) @Sendable (
@@ -36,7 +36,7 @@ public struct HTTPServerClosureRequestHandler: HTTPServerRequestHandler {
     /// Creates a new closure-based HTTP request handler.
     ///
     /// - Parameter handler: A closure that will be called to handle each incoming HTTP request.
-    ///   The closure takes the same parameters as the ``HTTPServerRequestHandler/handle(request:requestConcludingAsyncReader:sendResponse:)`` method.
+    ///   The closure takes the same parameters as the ``HTTPServerRequestHandler/handle(request:requestBodyAndTrailers:responseSender:)`` method.
     public init(
         handler: nonisolated(nonsending) @Sendable @escaping (
             HTTPRequest,
@@ -53,13 +53,13 @@ public struct HTTPServerClosureRequestHandler: HTTPServerRequestHandler {
     ///
     /// - Parameters:
     ///   - request: The HTTP request headers and metadata.
-    ///   - requestConcludingAsyncReader: A reader for accessing the request body data and trailing headers.
-    ///   - sendResponse: A callback function to send the HTTP response.
+    ///   - requestBodyAndTrailers: A reader for accessing the request body data and trailing headers.
+    ///   - responseSender: An ``HTTPResponseSender`` to send the HTTP response.
     public func handle(
         request: HTTPRequest,
-        requestConcludingAsyncReader: consuming HTTPRequestConcludingAsyncReader,
-        sendResponse: consuming HTTPResponseSender<HTTPResponseConcludingAsyncWriter>
+        requestBodyAndTrailers: consuming HTTPRequestConcludingAsyncReader,
+        responseSender: consuming HTTPResponseSender<HTTPResponseConcludingAsyncWriter>
     ) async throws {
-        try await self._handler(request, requestConcludingAsyncReader, sendResponse)
+        try await self._handler(request, requestBodyAndTrailers, responseSender)
     }
 }
