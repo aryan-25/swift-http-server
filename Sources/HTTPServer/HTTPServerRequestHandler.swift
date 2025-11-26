@@ -16,11 +16,12 @@ public import HTTPTypes
 ///
 /// ```swift
 /// struct EchoHandler: HTTPServerRequestHandler {
-/// func handle(
+///   func handle(
 ///     request: HTTPRequest,
-///     requestBodyAndTrailers: consuming HTTPRequestConcludingAsyncReader,
-///     responseSender: consuming HTTPResponseSender<HTTPResponseConcludingAsyncWriter>
-/// ) async throws {
+///     requestContext: HTTPRequestContext,
+///     requestConcludingAsyncReader: consuming sending HTTPRequestConcludingAsyncReader,
+///     responseSender: consuming sending HTTPResponseSender<HTTPResponseConcludingAsyncWriter>
+///   ) async throws {
 ///     // Read the entire request body
 ///     let (bodyData, trailers) = try await requestConcludingAsyncReader.consumeAndConclude { reader in
 ///         var reader = reader
@@ -81,12 +82,13 @@ public protocol HTTPServerRequestHandler: Sendable {
     /// 1. Examine the request headers in the `request` parameter
     /// 2. Read the request body data from the ``RequestConcludingAsyncReader`` as needed
     /// 3. Process the request and prepare a response
-    /// 4. Optionally call ``HTTPResponseSender/sendInformationalResponse(_:)`` as needed
-    /// 4. Call the ``HTTPResponseSender/sendResponse(_:)`` with an appropriate HTTP response
+    /// 4. Optionally call ``HTTPResponseSender/sendInformational(_:)`` as needed
+    /// 4. Call the ``HTTPResponseSender/send(_:)`` with an appropriate HTTP response
     /// 5. Write the response body data to the returned ``HTTPResponseConcludingAsyncWriter``
     ///
     /// - Parameters:
     ///   - request: The HTTP request headers and metadata.
+    ///   - requestContext: A ``HTTPRequestContext``.
     ///   - requestBodyAndTrailers: A reader for accessing the request body data and trailing headers.
     ///     This follows the `ConcludingAsyncReader` pattern, allowing for incremental reading of request body data
     ///     and concluding with any trailer fields sent at the end of the request.
@@ -95,8 +97,8 @@ public protocol HTTPServerRequestHandler: Sendable {
     ///
     /// - Throws: Any error encountered during request processing or response generation.
     func handle(
-        // TODO: add request context parameter
         request: HTTPRequest,
+        requestContext: HTTPRequestContext,
         requestBodyAndTrailers: consuming sending ConcludingRequestReader,
         responseSender: consuming sending HTTPResponseSender<ConcludingResponseWriter>
     ) async throws

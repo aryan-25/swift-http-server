@@ -20,7 +20,7 @@ where
         input: consuming Input,
         next: (consuming NextInput) async throws -> Void
     ) async throws {
-        try await input.withContents { request, requestReader, responseSender in
+        try await input.withContents { request, _, requestReader, responseSender in
             var maybeReader = Optional(requestReader)
             try await responseSender.send(HTTPResponse(status: .accepted))
                 .produceAndConclude { responseBodyAsyncWriter in

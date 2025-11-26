@@ -424,6 +424,7 @@ where RequestHandler.ConcludingRequestReader == HTTPRequestConcludingAsyncReader
                     do {
                         try await handler.handle(
                             request: httpRequest,
+                            requestContext: HTTPRequestContext(),
                             requestBodyAndTrailers: HTTPRequestConcludingAsyncReader(
                                 iterator: iterator,
                                 readerState: readerState

@@ -8,6 +8,7 @@ public struct RequestResponseMiddlewareBox<
     ResponseWriter: ConcludingAsyncWriter & ~Copyable
 >: ~Copyable {
     private let request: HTTPRequest
+    private let requestContext: HTTPRequestContext
     private let requestReader: RequestReader
     private let responseSender: HTTPResponseSender<ResponseWriter>
     
@@ -18,10 +19,12 @@ public struct RequestResponseMiddlewareBox<
     ///   - responseSender: The ``HTTPResponseSender``.
     public init(
         request: HTTPRequest,
+        requestContext: HTTPRequestContext,
         requestReader: consuming RequestReader,
         responseSender: consuming HTTPResponseSender<ResponseWriter>
     ) {
         self.request = request
+        self.requestContext = requestContext
         self.requestReader = requestReader
         self.responseSender = responseSender
     }
@@ -32,11 +35,17 @@ public struct RequestResponseMiddlewareBox<
     public consuming func withContents<T>(
         _ handler: nonisolated(nonsending) (
             HTTPRequest,
+            HTTPRequestContext,
             consuming RequestReader,
             consuming HTTPResponseSender<ResponseWriter>
         ) async throws -> T
     ) async throws -> T {
-        try await handler(self.request, self.requestReader, self.responseSender)
+        try await handler(
+            self.request,
+            self.requestContext,
+            self.requestReader,
+            self.responseSender
+        )
     }
 }
 

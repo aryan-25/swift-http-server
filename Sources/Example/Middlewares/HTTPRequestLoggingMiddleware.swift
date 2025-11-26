@@ -34,7 +34,7 @@ where
         input: consuming Input,
         next: (consuming NextInput) async throws -> Void
     ) async throws {
-        try await input.withContents { request, requestReader, responseSender in
+        try await input.withContents { request, context, requestReader, responseSender in
             self.logger.info("Received request \(request.path ?? "unknown" ) \(request.method.rawValue)")
             defer {
                 self.logger.info("Finished request \(request.path ?? "unknown" ) \(request.method.rawValue)")
@@ -47,6 +47,7 @@ where
             var maybeSender = Optional(responseSender)
             let requestResponseBox = RequestResponseMiddlewareBox(
                 request: request,
+                requestContext: context,
                 requestReader: wrappedReader,
                 responseSender: HTTPResponseSender { [logger] response in
                     if let sender = maybeSender.take() {
