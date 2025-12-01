@@ -3,11 +3,21 @@ public import HTTPTypes
 @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
 /// A generic HTTP server protocol that can handle incoming HTTP requests.
 public protocol HTTPServerProtocol: Sendable, ~Copyable, ~Escapable {
-    // TODO: write down in the proposal we can't make the serve method generic over the handler
-    // because otherwise, closure-based APIs can't be implemented.
+    /// The ``ConcludingAsyncReader`` to use when reading requests. ``ConcludingAsyncReader/FinalElement``
+    /// must be an optional `HTTPFields`, and ``ConcludingAsyncReader/Underlying`` must use `Span<UInt8>` as its
+    /// `ReadElement`.
+    associatedtype RequestReader: ConcludingAsyncReader & ~Copyable & SendableMetatype
+    where RequestReader.Underlying.ReadElement == Span<UInt8>,
+          RequestReader.Underlying.ReadFailure == any Error,
+          RequestReader.FinalElement == HTTPFields?
 
-    /// The ``HTTPServerRequestHandler`` to use when handling requests.
-    associatedtype RequestHandler: HTTPServerRequestHandler
+    /// The ``ConcludingAsyncWriter`` to use when writing responses. ``ConcludingAsyncWriter/FinalElement``
+    /// must be an optional `HTTPFields`, and ``ConcludingAsyncWriter/Underlying`` must use `Span<UInt8>` as its
+    /// `WriteElement`.
+    associatedtype ResponseWriter: ConcludingAsyncWriter & ~Copyable & SendableMetatype
+    where ResponseWriter.Underlying.WriteElement == Span<UInt8>,
+          ResponseWriter.Underlying.WriteFailure == any Error,
+          ResponseWriter.FinalElement == HTTPFields?
 
     /// Starts an HTTP server with the specified request handler.
     ///
@@ -18,7 +28,7 @@ public protocol HTTPServerProtocol: Sendable, ~Copyable, ~Escapable {
     ///
     /// - Parameters:
     ///   - handler: A ``HTTPServerRequestHandler`` implementation that processes incoming HTTP requests. The handler
-    ///     receives each request along with a body reader and ``HTTPResponseSender``.
+    ///     receives each request along with its context, a body and trailers reader, and an ``HTTPResponseSender``.
     ///
     /// ## Example
     ///
@@ -26,8 +36,9 @@ public protocol HTTPServerProtocol: Sendable, ~Copyable, ~Escapable {
     /// struct EchoHandler: HTTPServerRequestHandler {
     ///     func handle(
     ///         request: HTTPRequest,
-    ///         requestBodyAndTrailers: consuming HTTPRequestConcludingAsyncReader,
-    ///         responseSender: consuming HTTPResponseSender<HTTPResponseConcludingAsyncWriter>
+    ///         requestContext: HTTPRequestContext,
+    ///         requestBodyAndTrailers: consuming sending HTTPRequestConcludingAsyncReader,
+    ///         responseSender: consuming sending HTTPResponseSender<HTTPResponseConcludingAsyncWriter>
     ///     ) async throws {
     ///         let response = HTTPResponse(status: .ok)
     ///         let writer = try await responseSender.send(response)
@@ -39,5 +50,5 @@ public protocol HTTPServerProtocol: Sendable, ~Copyable, ~Escapable {
     ///
     /// try await server.serve(handler: EchoHandler())
     /// ```
-    func serve(handler: RequestHandler) async throws
+    func serve(handler: some HTTPServerRequestHandler<RequestReader, ResponseWriter>) async throws
 }
