@@ -11,9 +11,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-public import Logging
 import HTTPTypes
+public import Logging
 import NIOCertificateReloading
+import NIOConcurrencyHelpers
 import NIOCore
 import NIOHTTP1
 import NIOHTTP2
@@ -22,9 +23,9 @@ import NIOHTTPTypesHTTP1
 import NIOHTTPTypesHTTP2
 import NIOPosix
 import NIOSSL
-import X509
 import SwiftASN1
 import Synchronization
+import X509
 
 /// A generic HTTP server that can handle incoming HTTP requests.
 ///
@@ -82,6 +83,8 @@ public struct NIOHTTPServer: HTTPServerProtocol {
     private let logger: Logger
     private let configuration: HTTPServerConfiguration
 
+    var listeningAddressState: NIOLockedValueBox<State>
+
     /// Create a new ``HTTPServer`` implemented over `SwiftNIO`.
     /// - Parameters:
     ///   - logger: A logger instance for recording server events and debugging information.
@@ -92,6 +95,10 @@ public struct NIOHTTPServer: HTTPServerProtocol {
     ) {
         self.logger = logger
         self.configuration = configuration
+
+        // TODO: If we allow users to pass in an event loop, use that instead of the singleton MTELG.
+        let eventLoopGroup: MultiThreadedEventLoopGroup = .singletonMultiThreadedEventLoopGroup
+        self.listeningAddressState = .init(.idle(eventLoopGroup.any().makePromise()))
     }
 
     /// Starts an HTTP server with the specified request handler.
@@ -133,6 +140,15 @@ public struct NIOHTTPServer: HTTPServerProtocol {
     /// )
     /// ```
     public func serve(handler: some HTTPServerRequestHandler<RequestReader, ResponseWriter>) async throws {
+        defer {
+            switch self.listeningAddressState.withLockedValue({ $0.close() }) {
+            case .failPromise(let promise, let error):
+                promise.fail(error)
+            case .doNothing:
+                ()
+            }
+        }
+
         let asyncChannelConfiguration: NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>.Configuration
         switch self.configuration.backpressureStrategy.backing {
         case .watermark(let low, let high):
@@ -305,6 +321,8 @@ public struct NIOHTTPServer: HTTPServerProtocol {
                     }
                 }
 
+            try self.addressBound(serverChannel.channel.localAddress)
+
             try await withThrowingDiscardingTaskGroup { group in
                 try await serverChannel.executeThenClose { inbound in
                     for try await http1Channel in inbound {
@@ -366,6 +384,8 @@ public struct NIOHTTPServer: HTTPServerProtocol {
                         }
                     }
                 }
+
+            try self.addressBound(serverChannel.channel.localAddress)
 
             try await withThrowingDiscardingTaskGroup { group in
                 try await serverChannel.executeThenClose { inbound in
