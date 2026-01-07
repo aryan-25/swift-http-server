@@ -18,11 +18,7 @@ struct HTTPResponseConcludingAsyncWriterTests {
         let (writer, sink) = NIOAsyncChannelOutboundWriter<HTTPResponsePart>.makeTestingWriter()
         let responseWriter = HTTPResponseConcludingAsyncWriter(writer: writer, writerState: .init())
 
-        try await responseWriter.produceAndConclude { writer in
-            var writer = writer
-            try await writer.write(self.bodySampleOne)
-            return self.trailerSampleOne
-        }
+        try await responseWriter.writeAndConclude(self.bodySampleOne, finalElement: self.trailerSampleOne)
 
         // Now read the response
         var responseIterator = sink.makeAsyncIterator()
