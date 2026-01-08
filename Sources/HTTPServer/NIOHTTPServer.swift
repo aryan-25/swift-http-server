@@ -80,7 +80,7 @@ public struct NIOHTTPServer: HTTPServerProtocol {
     public typealias RequestReader = HTTPRequestConcludingAsyncReader
     public typealias ResponseWriter = HTTPResponseConcludingAsyncWriter
 
-    private let logger: Logger
+    let logger: Logger
     private let configuration: NIOHTTPServerConfiguration
 
     var listeningAddressState: NIOLockedValueBox<State>
@@ -186,7 +186,7 @@ public struct NIOHTTPServer: HTTPServerProtocol {
             tlsConfiguration.applicationProtocols = ["h2", "http/1.1"]
 
             try await self.serveSecureUpgrade(
-                bindTarget: configuration.bindTarget,
+                bindTarget: self.configuration.bindTarget,
                 tlsConfiguration: tlsConfiguration,
                 handler: handler,
                 asyncChannelConfiguration: asyncChannelConfiguration,
@@ -204,7 +204,7 @@ public struct NIOHTTPServer: HTTPServerProtocol {
             tlsConfiguration.applicationProtocols = ["h2", "http/1.1"]
 
             try await self.serveSecureUpgrade(
-                bindTarget: configuration.bindTarget,
+                bindTarget: self.configuration.bindTarget,
                 tlsConfiguration: tlsConfiguration,
                 handler: handler,
                 asyncChannelConfiguration: asyncChannelConfiguration,
@@ -229,7 +229,7 @@ public struct NIOHTTPServer: HTTPServerProtocol {
             tlsConfiguration.applicationProtocols = ["h2", "http/1.1"]
 
             try await self.serveSecureUpgrade(
-                bindTarget: configuration.bindTarget,
+                bindTarget: self.configuration.bindTarget,
                 tlsConfiguration: tlsConfiguration,
                 handler: handler,
                 asyncChannelConfiguration: asyncChannelConfiguration,
@@ -252,7 +252,7 @@ public struct NIOHTTPServer: HTTPServerProtocol {
             tlsConfiguration.applicationProtocols = ["h2", "http/1.1"]
 
             try await self.serveSecureUpgrade(
-                bindTarget: configuration.bindTarget,
+                bindTarget: self.configuration.bindTarget,
                 tlsConfiguration: tlsConfiguration,
                 handler: handler,
                 asyncChannelConfiguration: asyncChannelConfiguration,
@@ -262,134 +262,7 @@ public struct NIOHTTPServer: HTTPServerProtocol {
         }
     }
 
-    private func serveInsecureHTTP1_1(
-        bindTarget: NIOHTTPServerConfiguration.BindTarget,
-        handler: some HTTPServerRequestHandler<RequestReader, ResponseWriter>,
-        asyncChannelConfiguration: NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>.Configuration
-    ) async throws {
-        switch bindTarget.backing {
-        case .hostAndPort(let host, let port):
-            let serverChannel = try await ServerBootstrap(group: .singletonMultiThreadedEventLoopGroup)
-                .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
-                .bind(host: host, port: port) { channel in
-                    channel.pipeline.configureHTTPServerPipeline().flatMapThrowing {
-                        try channel.pipeline.syncOperations.addHandler(HTTP1ToHTTPServerCodec(secure: false))
-                        return try NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>(
-                            wrappingChannelSynchronously: channel,
-                            configuration: asyncChannelConfiguration
-                        )
-                    }
-                }
-
-            try self.addressBound(serverChannel.channel.localAddress)
-
-            try await withThrowingDiscardingTaskGroup { group in
-                try await serverChannel.executeThenClose { inbound in
-                    for try await http1Channel in inbound {
-                        group.addTask {
-                            try await self.handleRequestChannel(
-                                channel: http1Channel,
-                                handler: handler
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func serveSecureUpgrade(
-        bindTarget: NIOHTTPServerConfiguration.BindTarget,
-        tlsConfiguration: TLSConfiguration,
-        handler: some HTTPServerRequestHandler<RequestReader, ResponseWriter>,
-        asyncChannelConfiguration: NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>.Configuration,
-        http2Configuration: NIOHTTP2Handler.Configuration,
-        verificationCallback: (@Sendable ([X509.Certificate]) async throws -> CertificateVerificationResult)? = nil
-    ) async throws {
-        switch bindTarget.backing {
-        case .hostAndPort(let host, let port):
-            let serverChannel = try await ServerBootstrap(group: .singletonMultiThreadedEventLoopGroup)
-                .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
-                .bind(host: host, port: port) { channel in
-                    channel.eventLoop.makeCompletedFuture {
-                        try channel.pipeline.syncOperations
-                            .addHandler(self.makeSSLServerHandler(tlsConfiguration, verificationCallback))
-                    }.flatMap {
-                        channel.configureAsyncHTTPServerPipeline(http2Configuration: http2Configuration) { channel in
-                            channel.eventLoop.makeCompletedFuture {
-                                try channel.pipeline.syncOperations.addHandler(HTTP1ToHTTPServerCodec(secure: true))
-
-                                return try NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>(
-                                    wrappingChannelSynchronously: channel,
-                                    configuration: asyncChannelConfiguration
-                                )
-                            }
-                        } http2ConnectionInitializer: { channel in
-                            channel.eventLoop.makeCompletedFuture(.success(channel))
-                        } http2StreamInitializer: { channel in
-                            channel.eventLoop.makeCompletedFuture {
-                                try channel.pipeline.syncOperations
-                                    .addHandler(
-                                        HTTP2FramePayloadToHTTPServerCodec()
-                                    )
-
-                                return try NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>(
-                                    wrappingChannelSynchronously: channel,
-                                    configuration: asyncChannelConfiguration
-                                )
-                            }
-                        }
-                    }
-                }
-
-            try self.addressBound(serverChannel.channel.localAddress)
-
-            try await withThrowingDiscardingTaskGroup { group in
-                try await serverChannel.executeThenClose { inbound in
-                    for try await upgradeResult in inbound {
-                        group.addTask {
-                            do {
-                                try await withThrowingDiscardingTaskGroup { connectionGroup in
-                                    switch try await upgradeResult.get() {
-                                    case .http1_1(let http1Channel):
-                                        let chainFuture = http1Channel.channel.nioSSL_peerValidatedCertificateChain()
-                                        Self.$connectionContext.withValue(ConnectionContext(chainFuture)) {
-                                            connectionGroup.addTask {
-                                                try await self.handleRequestChannel(
-                                                    channel: http1Channel,
-                                                    handler: handler
-                                                )
-                                            }
-                                        }
-                                    case .http2((let http2Connection, let http2Multiplexer)):
-                                        do {
-                                            let chainFuture = http2Connection.nioSSL_peerValidatedCertificateChain()
-                                            try await Self.$connectionContext.withValue(ConnectionContext(chainFuture)) {
-                                                for try await http2StreamChannel in http2Multiplexer.inbound {
-                                                    connectionGroup.addTask {
-                                                        try await self.handleRequestChannel(
-                                                            channel: http2StreamChannel,
-                                                            handler: handler
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        } catch {
-                                            self.logger.debug("HTTP2 connection closed: \(error)")
-                                        }
-                                    }
-                                }
-                            } catch {
-                                self.logger.debug("Negotiating ALPN failed: \(error)")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func handleRequestChannel(
+    func handleRequestChannel(
         channel: NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>,
         handler: some HTTPServerRequestHandler<RequestReader, ResponseWriter>
     ) async throws {
@@ -466,47 +339,6 @@ public struct NIOHTTPServer: HTTPServerProtocol {
             self.logger.debug("Error thrown while handling connection: \(error)")
             // TODO: We need to send a response head here potentially
             throw error
-        }
-    }
-}
-
-@available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-extension NIOHTTPServer {
-    fileprivate func makeSSLServerHandler(
-        _ tlsConfiguration: TLSConfiguration,
-        _ customVerificationCallback: (@Sendable ([X509.Certificate]) async throws -> CertificateVerificationResult)?
-    ) throws -> NIOSSLServerHandler {
-        if let customVerificationCallback {
-            return try NIOSSLServerHandler(
-                context: .init(configuration: tlsConfiguration),
-                customVerificationCallbackWithMetadata: { certificates, promise in
-                    promise.completeWithTask {
-                        // Convert input [NIOSSLCertificate] to [X509.Certificate]
-                        let x509Certs = try certificates.map { try Certificate($0) }
-
-                        let callbackResult = try await customVerificationCallback(x509Certs)
-
-                        switch callbackResult {
-                        case .certificateVerified(let verificationMetadata):
-                            guard let peerChain = verificationMetadata.validatedCertificateChain else {
-                                return .certificateVerified(.init(nil))
-                            }
-
-                            // Convert the result into [NIOSSLCertificate]
-                            let nioSSLCerts = try peerChain.map { try NIOSSLCertificate($0) }
-                            return .certificateVerified(.init(.init(nioSSLCerts)))
-
-                        case .failed(let error):
-                            self.logger.error("Custom certificate verification failed", metadata: [
-                                "failure-reason": .string(error.reason)
-                            ])
-                            return .failed
-                        }
-                    }
-                }
-            )
-        } else {
-            return try NIOSSLServerHandler(context: .init(configuration: tlsConfiguration))
         }
     }
 }

@@ -30,7 +30,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-distributed-tracing.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-certificates.git", from: "1.16.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
+        // TODO: Update `branch` once NIOAsyncTestingChannel patch (https://github.com/apple/swift-nio/pull/3464) is released.
+        .package(url: "https://github.com/apple/swift-nio.git", branch: "main"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.36.0"),
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.30.0"),
         .package(url: "https://github.com/apple/swift-nio-http2.git", from: "1.0.0"),
