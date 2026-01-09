@@ -71,21 +71,30 @@ public struct HTTPRequestConcludingAsyncReader: ConcludingAsyncReader, ~Copyable
                 throw .first(error)
             }
 
-            do {
-                switch requestPart {
-                case .head:
-                    fatalError()
-                case .body(let element):
-                    return try await body(Array(buffer: element).span)
-                case .end(let trailers):
-                    self.state.wrapped.withLock { state in
-                        state.trailers = trailers
-                        state.finishedReading = true
-                    }
-                    return try await body(.init())
-                case .none:
-                    return try await body(.init())
+            let readElement: ByteBuffer
+
+            switch requestPart {
+            case .head:
+                fatalError()
+            case .body(let element):
+                if let maximumCount, maximumCount < element.readableBytes {
+                    throw .first(LimitExceeded())
                 }
+
+                readElement = element
+            case .end(let trailers):
+                self.state.wrapped.withLock { state in
+                    state.trailers = trailers
+                    state.finishedReading = true
+                }
+
+                readElement = .init()
+            case .none:
+                readElement = .init()
+            }
+
+            do {
+                return try await body(Array(buffer: readElement).span)
             } catch {
                 throw .second(error)
             }
