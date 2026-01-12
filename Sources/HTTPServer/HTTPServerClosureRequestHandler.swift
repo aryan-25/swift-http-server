@@ -88,7 +88,7 @@ public struct HTTPServerClosureRequestHandler<
 }
 
 @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-extension HTTPServerProtocol {
+extension HTTPServer {
     /// Starts an HTTP server with a closure-based request handler.
     ///
     /// This method provides a convenient way to start an HTTP server using a closure to handle incoming requests.
@@ -114,7 +114,7 @@ extension HTTPServerProtocol {
     /// }
     /// ```
     public func serve(
-        handler: @Sendable @escaping (
+        handler: nonisolated(nonsending) @Sendable @escaping (
             _ request: HTTPRequest,
             _ requestContext: HTTPRequestContext,
             _ requestBodyAndTrailers: consuming sending RequestReader,

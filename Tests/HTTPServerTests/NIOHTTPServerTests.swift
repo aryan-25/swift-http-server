@@ -91,7 +91,7 @@ struct NIOHTTPServerTests {
                     #expect(request.path == "/")
 
                     var buffer = ByteBuffer()
-                    let finalElement = try await reader.consumeAndConclude { bodyReader in
+                    let (_, finalElement) = try await reader.consumeAndConclude { bodyReader in
                         var bodyReader = bodyReader
                         return try await bodyReader.collect(upTo: Self.bodyData.readableBytes + 1) { body in
                             buffer.writeBytes(body.bytes)
