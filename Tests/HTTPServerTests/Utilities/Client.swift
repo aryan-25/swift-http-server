@@ -37,7 +37,7 @@ func setUpClient(host: String, port: Int) async throws -> NIOAsyncChannel<HTTPRe
 
 @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
 func setUpClientWithMTLS(
-    at address: HTTPServer.SocketAddress,
+    at address: NIOHTTPServer.SocketAddress,
     chain: ChainPrivateKeyPair,
     trustRoots: [Certificate],
     applicationProtocol: String,
