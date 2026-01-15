@@ -33,62 +33,20 @@ extension NIOHTTPServerConfiguration {
     ///
     /// ## Configuration keys:
     ///
-    /// All configuration keys are scoped under the `"httpServer"` key, which should have four sub-keys: `"bindTarget"`,
-    /// `"transportSecurity"`, `"backpressureStrategy"`, and `"http2"`.
-    ///
-    /// ### Configuration keys for `"bindTarget"`:
-    /// - `host` (string, required): The hostname or IP address the server will bind to (e.g., "localhost", "0.0.0.0").
-    /// - `port` (int, required): The port number the server will listen on (e.g., 8080, 443).
-    ///
-    /// ### Configuration keys for `"transportSecurity"`:
-    /// - `security` (string, required): The transport security for the server (permitted values: `"plaintext"`,
-    ///   `"tls"`, `"reloadingTLS"`, `"mTLS"`, `"reloadingMTLS"`).
-    ///
-    /// #### Configuration keys for `"tls"`:
-    /// - `certificateChainPEMString` (string, required): PEM-formatted certificate chain content.
-    /// - `privateKeyPEMString` (string, required, secret): PEM-formatted private key content.
-    ///
-    /// #### Configuration keys for `"reloadingTLS"`:
-    /// - `refreshInterval` (int, optional, default: 30): The interval (in seconds) at which the certificate chain and
-    ///    private key will be reloaded.
-    /// - `certificateChainPEMPath` (string, required): Path to the certificate chain PEM file.
-    /// - `privateKeyPEMPath` (string, required): Path to the private key PEM file.
-    ///
-    /// #### Configuration keys for `"mTLS"`:
-    /// - `certificateChainPEMString` (string, required): PEM-formatted certificate chain content.
-    /// - `privateKeyPEMString` (string, required, secret): PEM-formatted private key content.
-    /// - `trustRoots` (string array, optional, default: system trust roots):  The root certificates to trust when
-    ///    verifying client certificates.
-    /// - `certificateVerificationMode` (string, required): The client certificate validation behavior (permitted
-    ///    values: "optionalVerification" or "noHostnameVerification").
-    ///
-    /// #### Configuration keys for `"reloadingMTLS"`:
-    /// - `refreshInterval` (int, optional, default: 30): The interval (in seconds) at which the certificate chain and
-    ///    private key will be reloaded.
-    /// - `certificateChainPEMPath` (string, required): Path to the certificate chain PEM file.
-    /// - `privateKeyPEMPath` (string, required): Path to the private key PEM file.
-    /// - `trustRoots` (string array, optional, default: system trust roots):  The root certificates to trust when
-    ///    verifying client certificates.
-    /// - `certificateVerificationMode` (string, required): The client certificate validation behavior (permitted
-    ///    values: "optionalVerification" or "noHostnameVerification").
-    ///
-    /// ### Configuration keys for `"backpressureStrategy"`:
-    /// - `low` (int, optional, default: 2): The threshold below which the consumer will ask the producer to produce
-    ///    more elements.
-    /// - `high` (int, optional, default: 10): The threshold above which the producer will stop producing elements.
-    ///
-    /// ### Configuration keys for `"http2"`:
-    /// - `maxFrameSize` (int, optional, default: 2^14):  The maximum frame size to be used in an HTTP/2 connection.
-    /// - `targetWindowSize` (int, optional, default: 2^16 - 1): The target window size to be used in an HTTP/2
-    ///    connection.
-    /// - `maxConcurrentStreams` (int, optional, default: 100): The maximum number of concurrent streams in an HTTP/2
-    ///    connection.
+    /// ``NIOHTTPServerConfiguration`` is comprised of four types. Provide configuration for each type under the
+    /// specified key:
+    /// - ``BindTarget`` - Provide under key `"bindTarget"` (keys listed in ``BindTarget/init(config:)``).
+    /// - ``TransportSecurity`` - Provide under key `"transportSecurity"` (keys listed in
+    ///   ``TransportSecurity/init(config:customCertificateVerificationCallback:)``).
+    /// - ``BackPressureStrategy`` - Provide under key `"backpressureStrategy"` (keys listed in
+    ///   ``BackPressureStrategy/init(config:)``).
+    /// - ``HTTP2`` - Provide under key `"http2"` (keys listed in ``HTTP2/init(config:)``).
     ///
     /// - Parameters:
     ///   - config: The configuration reader to read configuration values from.
     ///   - customCertificateVerificationCallback: An optional client certificate verification callback to use when
-    ///     mTLS is configured (i.e., when `"httpServer.transportSecurity.security"` is `"mTLS"` or `"reloadingMTLS"`).
-    ///     If provided when mTLS is *not* configured, this initializer throws
+    ///     mTLS is configured (i.e., when `"transportSecurity.security"` is `"mTLS"` or `"reloadingMTLS"`). If provided
+    ///     when mTLS is *not* configured, this initializer throws
     ///     ``NIOHTTPServerConfigurationError/customVerificationCallbackProvidedWhenNotUsingMTLS``. If set to `nil` when
     ///     mTLS *is* configured, the default client certificate verification logic of the underlying SSL implementation
     ///     is used.
@@ -98,7 +56,7 @@ extension NIOHTTPServerConfiguration {
             @Sendable ([Certificate]) async throws -> CertificateVerificationResult
         )? = nil
     ) throws {
-        let snapshot = config.snapshot().scoped(to: "httpServer")
+        let snapshot = config.snapshot()
 
         self.init(
             bindTarget: try .init(config: snapshot.scoped(to: "bindTarget")),
@@ -114,7 +72,14 @@ extension NIOHTTPServerConfiguration {
 
 @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
 extension NIOHTTPServerConfiguration.BindTarget {
-    init(config: ConfigSnapshotReader) throws {
+    /// Initialize a bind target configuration from a config reader.
+    ///
+    /// ## Configuration keys:
+    /// - `host` (string, required): The hostname or IP address the server will bind to (e.g., "localhost", "0.0.0.0").
+    /// - `port` (int, required): The port number the server will listen on (e.g., 8080, 443).
+    ///
+    /// - Parameter config: The configuration reader.
+    public init(config: ConfigSnapshotReader) throws {
         self.init(
             backing: .hostAndPort(
                 host: try config.requiredString(forKey: "host"),
@@ -126,7 +91,49 @@ extension NIOHTTPServerConfiguration.BindTarget {
 
 @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
 extension NIOHTTPServerConfiguration.TransportSecurity {
-    init(
+    /// Initialize a transport security configuration from a config reader.
+    ///
+    /// ## Configuration keys:
+    /// - `security` (string, required): The transport security for the server (permitted values: `"plaintext"`,
+    ///   `"tls"`, `"reloadingTLS"`, `"mTLS"`, `"reloadingMTLS"`).
+    ///
+    /// ### Configuration keys for `"tls"`:
+    /// - `certificateChainPEMString` (string, required): PEM-formatted certificate chain content.
+    /// - `privateKeyPEMString` (string, required, secret): PEM-formatted private key content.
+    ///
+    /// ### Configuration keys for `"reloadingTLS"`:
+    /// - `refreshInterval` (int, optional, default: 30): The interval (in seconds) at which the certificate chain and
+    ///    private key will be reloaded.
+    /// - `certificateChainPEMPath` (string, required): Path to the certificate chain PEM file.
+    /// - `privateKeyPEMPath` (string, required): Path to the private key PEM file.
+    ///
+    /// ### Configuration keys for `"mTLS"`:
+    /// - `certificateChainPEMString` (string, required): PEM-formatted certificate chain content.
+    /// - `privateKeyPEMString` (string, required, secret): PEM-formatted private key content.
+    /// - `trustRoots` (string array, optional, default: system trust roots):  The root certificates to trust when
+    ///    verifying client certificates.
+    /// - `certificateVerificationMode` (string, required): The client certificate validation behavior (permitted
+    ///    values: "optionalVerification" or "noHostnameVerification").
+    ///
+    /// ### Configuration keys for `"reloadingMTLS"`:
+    /// - `refreshInterval` (int, optional, default: 30): The interval (in seconds) at which the certificate chain and
+    ///    private key will be reloaded.
+    /// - `certificateChainPEMPath` (string, required): Path to the certificate chain PEM file.
+    /// - `privateKeyPEMPath` (string, required): Path to the private key PEM file.
+    /// - `trustRoots` (string array, optional, default: system trust roots):  The root certificates to trust when
+    ///    verifying client certificates.
+    /// - `certificateVerificationMode` (string, required): The client certificate validation behavior (permitted
+    ///    values: "optionalVerification" or "noHostnameVerification").
+    ///
+    /// - Parameters:
+    ///   - config: The configuration reader.
+    ///   - customCertificateVerificationCallback: An optional client certificate verification callback to use when
+    ///     mTLS is configured (i.e., when `"transportSecurity.security"` is `"mTLS"` or `"reloadingMTLS"`). If provided
+    ///     when mTLS is *not* configured, this initializer throws
+    ///     ``NIOHTTPServerConfigurationError/customVerificationCallbackProvidedWhenNotUsingMTLS``. If set to `nil` when
+    ///     mTLS *is* configured, the default client certificate verification logic of the underlying SSL implementation
+    ///     is used.
+    public init(
         config: ConfigSnapshotReader,
         customCertificateVerificationCallback: (
             @Sendable ([Certificate]) async throws -> CertificateVerificationResult
@@ -242,7 +249,15 @@ extension NIOHTTPServerConfiguration.TransportSecurity {
 
 @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
 extension NIOHTTPServerConfiguration.BackPressureStrategy {
-    init(config: ConfigSnapshotReader) {
+    /// Initialize the backpressure strategy configuration from a config reader.
+    ///
+    /// ## Configuration keys:
+    /// - `low` (int, optional, default: 2): The threshold below which the consumer will ask the producer to produce
+    ///    more elements.
+    /// - `high` (int, optional, default: 10): The threshold above which the producer will stop producing elements.
+    ///
+    /// - Parameter config: The configuration reader.
+    public init(config: ConfigSnapshotReader) {
         self.init(
             backing: .watermark(
                 low: config.int(
@@ -260,7 +275,17 @@ extension NIOHTTPServerConfiguration.BackPressureStrategy {
 
 @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
 extension NIOHTTPServerConfiguration.HTTP2 {
-    init(config: ConfigSnapshotReader) {
+    /// Initialize a HTTP/2 configuration from a config reader.
+    ///
+    /// ## Configuration keys:
+    /// - `maxFrameSize` (int, optional, default: 2^14):  The maximum frame size to be used in an HTTP/2 connection.
+    /// - `targetWindowSize` (int, optional, default: 2^16 - 1): The target window size to be used in an HTTP/2
+    ///    connection.
+    /// - `maxConcurrentStreams` (int, optional, default: 100): The maximum number of concurrent streams in an HTTP/2
+    ///    connection.
+    ///
+    /// - Parameter config: The configuration reader.
+    public init(config: ConfigSnapshotReader) {
         self.init(
             maxFrameSize: config.int(
                 forKey: "maxFrameSize",
