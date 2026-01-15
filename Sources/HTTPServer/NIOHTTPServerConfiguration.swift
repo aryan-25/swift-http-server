@@ -206,13 +206,17 @@ public struct NIOHTTPServerConfiguration: Sendable {
             self.maxConcurrentStreams = maxConcurrentStreams
         }
 
+        static let DEFAULT_MAX_FRAME_SIZE = 1 << 14
+        static let DEFAULT_TARGET_WINDOW_SIZE = (1 << 16) - 1
+        static let DEFAULT_MAX_CONCURRENT_STREAMS: Int? = nil
+
         /// Default values. The max frame size defaults to 2^14, the target window size defaults to 2^16-1, and
         /// the max concurrent streams default to infinite.
         public static var defaults: Self {
             Self(
-                maxFrameSize: 1 << 14,
-                targetWindowSize: (1 << 16) - 1,
-                maxConcurrentStreams: nil
+                maxFrameSize: Self.DEFAULT_MAX_FRAME_SIZE,
+                targetWindowSize: Self.DEFAULT_TARGET_WINDOW_SIZE,
+                maxConcurrentStreams: Self.DEFAULT_MAX_CONCURRENT_STREAMS
             )
         }
     }
@@ -225,7 +229,7 @@ public struct NIOHTTPServerConfiguration: Sendable {
 
         internal let backing: Backing
 
-        private init(backing: Backing) {
+        init(backing: Backing) {
             self.backing = backing
         }
 
@@ -236,6 +240,19 @@ public struct NIOHTTPServerConfiguration: Sendable {
         /// - Returns: A low/high watermark strategy with the configured thresholds.
         public static func watermark(low: Int, high: Int) -> Self {
             .init(backing: .watermark(low: low, high: high))
+        }
+
+        static let DEFAULT_WATERMARK_LOW = 2
+        static let DEFAULT_WATERMARK_HIGH = 10
+
+        /// Default values. The watermark low value defaults to 2, and the watermark high value default to 10.
+        public static var defaults: Self {
+            Self.init(
+                backing: .watermark(
+                    low: Self.DEFAULT_WATERMARK_LOW,
+                    high: Self.DEFAULT_WATERMARK_HIGH
+                )
+            )
         }
     }
 
@@ -261,7 +278,7 @@ public struct NIOHTTPServerConfiguration: Sendable {
     public init(
         bindTarget: BindTarget,
         transportSecurity: TransportSecurity = .plaintext,
-        backpressureStrategy: BackPressureStrategy = .watermark(low: 2, high: 10),
+        backpressureStrategy: BackPressureStrategy = .defaults,
         http2: HTTP2 = .defaults
     ) {
         self.bindTarget = bindTarget

@@ -34,6 +34,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.36.0"),
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.30.0"),
         .package(url: "https://github.com/apple/swift-nio-http2.git", from: "1.0.0"),
+        .package(url: "https://github.com/apple/swift-configuration", from: "1.0.0")
     ],
     targets: [
         .executableTarget(
@@ -65,7 +66,8 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "NIOHTTPTypesHTTP1", package: "swift-nio-extras"),
                 .product(name: "NIOHTTPTypesHTTP2", package: "swift-nio-extras"),
-                .product(name: "NIOCertificateReloading", package: "swift-nio-extras")
+                .product(name: "NIOCertificateReloading", package: "swift-nio-extras"),
+                .product(name: "Configuration", package: "swift-configuration")
             ],
             swiftSettings: extraSettings
         ),
