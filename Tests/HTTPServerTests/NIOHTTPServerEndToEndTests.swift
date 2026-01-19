@@ -88,7 +88,8 @@ struct NIOHTTPServerEndToEndTests {
                 }
             }
         ) { clientServerProvider in
-            try await clientServerProvider.withConnectedClient(clientTLSConfiguration: clientTLSConfig) { negotiatedConnection in
+            try await clientServerProvider.withConnectedClient(clientTLSConfiguration: clientTLSConfig) {
+                negotiatedConnection in
                 switch negotiatedConnection {
                 case .http1(_):
                     Issue.record("Failed to negotiate HTTP/2 despite the client requiring HTTP/2.")

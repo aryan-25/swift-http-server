@@ -77,7 +77,10 @@ struct HTTPSecureUpgradeClientServerProvider {
         let serverTestConnectionChannel = NIOAsyncTestingChannel()
 
         let connectionPromise = serverTestConnectionChannel.eventLoop.makePromise(of: Void.self)
-        serverTestConnectionChannel.connect(to: try .init(ipAddress: "127.0.0.1", port: 8000), promise: connectionPromise)
+        serverTestConnectionChannel.connect(
+            to: try .init(ipAddress: "127.0.0.1", port: 8000),
+            promise: connectionPromise
+        )
         try await connectionPromise.futureResult.get()
 
         // Set up the required channel handlers on `serverTestConnectionChannel`
@@ -112,9 +115,15 @@ struct HTTPSecureUpgradeClientServerProvider {
         }
     }
 
-    private func setUpClientConnection(tlsConfiguration: TLSConfiguration) async throws -> (
+    private func setUpClientConnection(
+        tlsConfiguration: TLSConfiguration
+    ) async throws -> (
         NIOAsyncTestingChannel,
-        EventLoopFuture<NIONegotiatedHTTPVersion<NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>, NIOHTTP2Handler.AsyncStreamMultiplexer<Channel>>>
+        EventLoopFuture<
+            NIONegotiatedHTTPVersion<
+                NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>, NIOHTTP2Handler.AsyncStreamMultiplexer<Channel>
+            >
+        >
     ) {
         let clientTestChannel = try await NIOAsyncTestingChannel { channel in
             _ = channel.eventLoop.makeCompletedFuture {
@@ -155,7 +164,11 @@ enum NegotiatedConnection {
     case http1(NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>)
     case http2(HTTP2StreamManager)
 
-    init(negotiationResult: NIONegotiatedHTTPVersion<NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>, NIOHTTP2Handler.AsyncStreamMultiplexer<Channel>>) async throws {
+    init(
+        negotiationResult: NIONegotiatedHTTPVersion<
+            NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>, NIOHTTP2Handler.AsyncStreamMultiplexer<Channel>
+        >
+    ) async throws {
         switch negotiationResult {
         case .http1_1(let http1AsyncChannel):
             self = .http1(http1AsyncChannel)

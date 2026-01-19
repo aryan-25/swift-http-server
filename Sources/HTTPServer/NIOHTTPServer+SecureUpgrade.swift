@@ -171,7 +171,7 @@ extension NIOHTTPServer {
     ) async throws {
         // The server requires a NIOAsyncChannel, so we create one from the test channel
         let testAsyncChannel = try await testChannel.eventLoop.submit {
-            return try NIOAsyncChannel<EventLoopFuture<NIOHTTPServer.NegotiatedChannel>, Never>(
+            try NIOAsyncChannel<EventLoopFuture<NIOHTTPServer.NegotiatedChannel>, Never>(
                 wrappingChannelSynchronously: testChannel,
                 configuration: .init()
             )

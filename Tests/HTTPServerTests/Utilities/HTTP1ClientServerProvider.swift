@@ -36,7 +36,7 @@ struct HTTP1ClientServerProvider {
         )
         // Create a test channel. We will run the server on this channel.
         let serverTestChannel = NIOAsyncTestingChannel()
-        
+
         try await withThrowingTaskGroup { group in
             // We are ready now. Start the server with the test channel.
             group.addTask {
@@ -56,12 +56,17 @@ struct HTTP1ClientServerProvider {
     /// Starts a new connection with the server and executes the provided `body` closure.
     /// - Parameter body: A closure that should send a request using the provided client instance and validate
     ///   the received response.
-    func withConnectedClient(body: (NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>) async throws -> Void) async throws {
+    func withConnectedClient(
+        body: (NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>) async throws -> Void
+    ) async throws {
         // Create a test connection channel
         let serverTestConnectionChannel = NIOAsyncTestingChannel()
 
         let connectionPromise = serverTestConnectionChannel.eventLoop.makePromise(of: Void.self)
-        serverTestConnectionChannel.connect(to: try .init(ipAddress: "127.0.0.1", port: 8000), promise: connectionPromise)
+        serverTestConnectionChannel.connect(
+            to: try .init(ipAddress: "127.0.0.1", port: 8000),
+            promise: connectionPromise
+        )
         try await connectionPromise.futureResult.get()
 
         // Set up the required channel handlers on `serverTestConnectionChannel`
@@ -88,8 +93,10 @@ struct HTTP1ClientServerProvider {
             try await group.next()
         }
     }
-    
-    private func setUpClientConnection() async throws -> (NIOAsyncTestingChannel, NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>) {
+
+    private func setUpClientConnection() async throws -> (
+        NIOAsyncTestingChannel, NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>
+    ) {
         let clientTestChannel = try await NIOAsyncTestingChannel { channel in
             try channel.pipeline.syncOperations.addHTTPClientHandlers()
             try channel.pipeline.syncOperations.addHandler(HTTP1ToHTTPClientCodec())

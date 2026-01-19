@@ -31,7 +31,10 @@ func setUpClient(host: String, port: Int) async throws -> NIOAsyncChannel<HTTPRe
                 try channel.pipeline.syncOperations.addHTTPClientHandlers()
                 try channel.pipeline.syncOperations.addHandler(HTTP1ToHTTPClientCodec())
 
-                return try NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>(wrappingChannelSynchronously: channel, configuration: .init())
+                return try NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>(
+                    wrappingChannelSynchronously: channel,
+                    configuration: .init()
+                )
             }
         }
 }
@@ -88,7 +91,10 @@ func setUpClientWithMTLS(
         return try await http2Channel.openStream { channel in
             channel.eventLoop.makeCompletedFuture {
                 try channel.pipeline.syncOperations.addHandler(HTTP2FramePayloadToHTTPClientCodec())
-                return try NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>(wrappingChannelSynchronously: channel, configuration: .init())
+                return try NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>(
+                    wrappingChannelSynchronously: channel,
+                    configuration: .init()
+                )
             }
         }
     }
