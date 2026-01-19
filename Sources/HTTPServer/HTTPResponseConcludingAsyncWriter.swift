@@ -6,14 +6,15 @@
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
 //
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
 
-public import HTTPTypes
 public import AsyncStreaming
 import BasicContainers
+public import HTTPTypes
 import NIOCore
 import NIOHTTPTypes
 import Synchronization
@@ -74,10 +75,10 @@ public struct HTTPResponseConcludingAsyncWriter: ConcludingAsyncWriter, ~Copyabl
                 byteBuffer.writeInteger(buffer[index])
             }
 
-//            buffer.span.withUnsafeBufferPointer { buffer in
-//                <#code#>
-//            }
-//            var byteBuffer = ByteBuffer()
+            //            buffer.span.withUnsafeBufferPointer { buffer in
+            //                <#code#>
+            //            }
+            //            var byteBuffer = ByteBuffer()
 
             do {
                 try await self.writer.write(.body(byteBuffer))
@@ -87,18 +88,17 @@ public struct HTTPResponseConcludingAsyncWriter: ConcludingAsyncWriter, ~Copyabl
 
             return result
 
-
-//            let pointer = buffer.withUnsafeMutableBufferPointer { $0 }
-//            var span = OutputSpan<WriteElement>(
-//                buffer: pointer,
-//                initializedCount: 0
-//            )
-//            do {
-//                let bodyResult = try await body(&span)
-//
-//            } catch {
-//                throw .second(error)
-//            }
+            //            let pointer = buffer.withUnsafeMutableBufferPointer { $0 }
+            //            var span = OutputSpan<WriteElement>(
+            //                buffer: pointer,
+            //                initializedCount: 0
+            //            )
+            //            do {
+            //                let bodyResult = try await body(&span)
+            //
+            //            } catch {
+            //                throw .second(error)
+            //            }
         }
     }
 

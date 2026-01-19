@@ -1,4 +1,17 @@
-// swift-tools-version: 6.2
+// swift-tools-version:6.2
+//===----------------------------------------------------------------------===//
+//
+// This source file is part of the Swift HTTP Server open source project
+//
+// Copyright (c) 2025 Apple Inc. and the Swift HTTP Server project authors
+// Licensed under Apache License v2.0
+//
+// See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+//===----------------------------------------------------------------------===//
 
 import PackageDescription
 
@@ -11,15 +24,16 @@ let extraSettings: [SwiftSetting] = [
     .enableUpcomingFeature("InferIsolatedConformances"),
     .enableUpcomingFeature("ExistentialAny"),
     .enableUpcomingFeature("MemberImportVisibility"),
-    .enableUpcomingFeature("InternalImportsByDefault")
+    .enableUpcomingFeature("InternalImportsByDefault"),
 ]
 
 let package = Package(
-    name: "HTTPServer",
+    name: "swift-http-server",
     products: [
         .library(
             name: "HTTPServer",
-            targets: ["HTTPServer"])
+            targets: ["HTTPServer"]
+        )
     ],
     dependencies: [
         .package(
@@ -34,7 +48,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.36.0"),
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.30.0"),
         .package(url: "https://github.com/apple/swift-nio-http2.git", from: "1.0.0"),
-        .package(url: "https://github.com/apple/swift-configuration", from: "1.0.0")
+        .package(url: "https://github.com/apple/swift-configuration", from: "1.0.0"),
     ],
     targets: [
         .executableTarget(
@@ -67,7 +81,7 @@ let package = Package(
                 .product(name: "NIOHTTPTypesHTTP1", package: "swift-nio-extras"),
                 .product(name: "NIOHTTPTypesHTTP2", package: "swift-nio-extras"),
                 .product(name: "NIOCertificateReloading", package: "swift-nio-extras"),
-                .product(name: "Configuration", package: "swift-configuration")
+                .product(name: "Configuration", package: "swift-configuration"),
             ],
             swiftSettings: extraSettings
         ),

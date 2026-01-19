@@ -6,6 +6,7 @@
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -66,13 +67,17 @@ public struct NIOHTTPServerConfiguration: Sendable {
                 privateKey: Certificate.PrivateKey,
                 trustRoots: [Certificate]?,
                 certificateVerification: CertificateVerificationMode = .noHostnameVerification,
-                customCertificateVerificationCallback: (@Sendable ([X509.Certificate]) async throws -> CertificateVerificationResult)? = nil
+                customCertificateVerificationCallback: (
+                    @Sendable ([X509.Certificate]) async throws -> CertificateVerificationResult
+                )? = nil
             )
             case reloadingMTLS(
                 certificateReloader: any CertificateReloader,
                 trustRoots: [Certificate]?,
                 certificateVerification: CertificateVerificationMode = .noHostnameVerification,
-                customCertificateVerificationCallback: (@Sendable ([X509.Certificate]) async throws -> CertificateVerificationResult)? = nil
+                customCertificateVerificationCallback: (
+                    @Sendable ([X509.Certificate]) async throws -> CertificateVerificationResult
+                )? = nil
             )
         }
 

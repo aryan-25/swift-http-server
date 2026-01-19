@@ -1,11 +1,26 @@
+//===----------------------------------------------------------------------===//
+//
+// This source file is part of the Swift HTTP Server open source project
+//
+// Copyright (c) 2025 Apple Inc. and the Swift HTTP Server project authors
+// Licensed under Apache License v2.0
+//
+// See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+//===----------------------------------------------------------------------===//
+
 import AsyncStreaming
-@testable import HTTPServer
 import HTTPTypes
 import NIOCore
 import NIOHTTP1
 import NIOHTTPTypes
 import NIOPosix
 import Testing
+
+@testable import HTTPServer
 
 @Suite
 struct HTTPRequestConcludingAsyncReaderTests {
@@ -37,7 +52,7 @@ struct HTTPRequestConcludingAsyncReaderTests {
         arguments: [ByteBuffer(repeating: 1, count: 100), ByteBuffer()],
         [
             HTTPFields([.init(name: .cookie, value: "test_cookie")]),
-            HTTPFields([.init(name: .cookie, value: "first_cookie"), .init(name: .cookie, value: "second_cookie")])
+            HTTPFields([.init(name: .cookie, value: "first_cookie"), .init(name: .cookie, value: "second_cookie")]),
         ]
     )
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
@@ -106,6 +121,7 @@ struct HTTPRequestConcludingAsyncReaderTests {
                 let (_, finalElement) = try await requestReader.consumeAndConclude { bodyReader in
                     // Read all body chunks
                     var chunksProcessed = 0
+                    // swift-format-ignore: ReplaceForEachWithForLoop
                     try await bodyReader.forEach { element in
                         var buffer = ByteBuffer()
                         buffer.writeBytes(element.bytes)
@@ -163,7 +179,10 @@ struct HTTPRequestConcludingAsyncReaderTests {
             source.yield(.body(.init(repeating: 5, count: 10)))
             source.finish()
 
-            let requestReader = HTTPRequestConcludingAsyncReader(iterator: stream.makeAsyncIterator(), readerState: .init())
+            let requestReader = HTTPRequestConcludingAsyncReader(
+                iterator: stream.makeAsyncIterator(),
+                readerState: .init()
+            )
 
             _ = try await requestReader.consumeAndConclude { requestBodyReader in
                 var requestBodyReader = requestBodyReader
