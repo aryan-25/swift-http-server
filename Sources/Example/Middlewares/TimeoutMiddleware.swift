@@ -6,6 +6,7 @@
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -45,9 +46,12 @@ extension TaskGroup {
             // This is actually safe. The body closure is async it will hop onto the
             // right executor automatically.
             let box = SendableBox(closure: escapingClosure)
-            self.addTask(name: nil, operation: {
-                await box.closure()
-            })
+            self.addTask(
+                name: nil,
+                operation: {
+                    await box.closure()
+                }
+            )
         }
     }
 }

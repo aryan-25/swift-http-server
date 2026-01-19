@@ -6,6 +6,7 @@
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -132,7 +133,11 @@ struct NIOHTTPServerTests {
     }
 
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-    @Test("mTLS request-response with custom verification callback returning peer certificates", .serialized, arguments: ["http/1.1", "h2"])
+    @Test(
+        "mTLS request-response with custom verification callback returning peer certificates",
+        .serialized,
+        arguments: ["http/1.1", "h2"]
+    )
     func testMTLS(applicationProtocol: String) async throws {
         let serverChain = try TestCA.makeSelfSignedChain()
         let clientChain = try TestCA.makeSelfSignedChain()

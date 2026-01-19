@@ -1,12 +1,12 @@
 //===----------------------------------------------------------------------===//
 //
-// This source file is part of the Swift HTTP API Proposal open source project
+// This source file is part of the Swift HTTP Server open source project
 //
-// Copyright (c) 2025 Apple Inc. and the Swift HTTP API Proposal project authors
+// Copyright (c) 2025 Apple Inc. and the Swift HTTP Server project authors
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
-// See CONTRIBUTORS.txt for the list of Swift HTTP API Proposal project authors
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -133,7 +133,9 @@ extension AsyncWriter where Self: ~Copyable, Self: ~Escapable {
     }
 
     @_lifetime(self: copy self)
-    public mutating func write(_ span: Span<WriteElement>) async throws(EitherError<WriteFailure, AsyncWriterWroteShortError>)
+    public mutating func write(
+        _ span: Span<WriteElement>
+    ) async throws(EitherError<WriteFailure, AsyncWriterWroteShortError>)
     where WriteElement: Copyable {
         var index = span.indices.startIndex
         while index < span.indices.endIndex {
