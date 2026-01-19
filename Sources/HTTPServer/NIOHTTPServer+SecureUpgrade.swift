@@ -214,9 +214,12 @@ extension NIOHTTPServer {
                             return .certificateVerified(.init(.init(nioSSLCerts)))
 
                         case .failed(let error):
-                            self.logger.error("Custom certificate verification failed", metadata: [
-                                "failure-reason": .string(error.reason)
-                            ])
+                            self.logger.error(
+                                "Custom certificate verification failed",
+                                metadata: [
+                                    "failure-reason": .string(error.reason)
+                                ]
+                            )
                             return .failed
                         }
                     }

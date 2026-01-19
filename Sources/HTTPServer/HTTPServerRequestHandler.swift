@@ -6,13 +6,14 @@
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
 //
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
 
-public import HTTPTypes
 public import AsyncStreaming
+public import HTTPTypes
 
 /// A protocol that defines the contract for handling HTTP server requests.
 ///
@@ -76,15 +77,17 @@ public protocol HTTPServerRequestHandler<RequestReader, ResponseWriter>: Sendabl
     /// must be an optional `HTTPFields`, and ``ConcludingAsyncReader/Underlying`` must use `Span<UInt8>` as its
     /// `ReadElement`.
     associatedtype RequestReader: ConcludingAsyncReader & ~Copyable & SendableMetatype
-    where RequestReader.Underlying.ReadElement == UInt8,
-          RequestReader.FinalElement == HTTPFields?
+    where
+        RequestReader.Underlying.ReadElement == UInt8,
+        RequestReader.FinalElement == HTTPFields?
 
     /// The ``ConcludingAsyncWriter`` to use when writing responses. ``ConcludingAsyncWriter/FinalElement``
     /// must be an optional `HTTPFields`, and ``ConcludingAsyncWriter/Underlying`` must use `Span<UInt8>` as its
     /// `WriteElement`.
     associatedtype ResponseWriter: ConcludingAsyncWriter & ~Copyable & SendableMetatype
-    where ResponseWriter.Underlying.WriteElement == UInt8,
-          ResponseWriter.FinalElement == HTTPFields?
+    where
+        ResponseWriter.Underlying.WriteElement == UInt8,
+        ResponseWriter.FinalElement == HTTPFields?
 
     /// Handles an incoming HTTP request and generates a response.
     ///
