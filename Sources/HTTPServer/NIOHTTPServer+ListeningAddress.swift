@@ -6,6 +6,7 @@
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -124,7 +125,8 @@ extension NIOHTTPServer {
     }
 }
 
-extension SocketAddress {
+@available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
+extension NIOHTTPServer.SocketAddress {
     fileprivate init(_ address: NIOCore.SocketAddress?) throws(ListeningAddressError) {
         guard let address, let port = address.port else {
             throw ListeningAddressError.addressOrPortNotAvailable

@@ -6,13 +6,14 @@
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
 //
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
 
-public import HTTPTypes
 public import AsyncStreaming
+public import HTTPTypes
 
 /// A closure-based implementation of ``HTTPServerRequestHandler``.
 ///
@@ -58,12 +59,13 @@ public struct HTTPServerClosureRequestHandler<
     /// - Parameter handler: A closure that will be called to handle each incoming HTTP request.
     ///   The closure takes the same parameters as the ``HTTPServerRequestHandler/handle(request:requestBodyAndTrailers:responseSender:)`` method.
     public init(
-        handler: nonisolated(nonsending) @Sendable @escaping (
-            HTTPRequest,
-            HTTPRequestContext,
-            consuming sending ConcludingRequestReader,
-            consuming sending HTTPResponseSender<ConcludingResponseWriter>
-        ) async throws -> Void
+        handler:
+            nonisolated(nonsending) @Sendable @escaping (
+                HTTPRequest,
+                HTTPRequestContext,
+                consuming sending ConcludingRequestReader,
+                consuming sending HTTPResponseSender<ConcludingResponseWriter>
+            ) async throws -> Void
     ) {
         self._handler = handler
     }
@@ -88,7 +90,7 @@ public struct HTTPServerClosureRequestHandler<
 }
 
 @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-extension HTTPServerProtocol {
+extension HTTPServer {
     /// Starts an HTTP server with a closure-based request handler.
     ///
     /// This method provides a convenient way to start an HTTP server using a closure to handle incoming requests.
@@ -114,12 +116,13 @@ extension HTTPServerProtocol {
     /// }
     /// ```
     public func serve(
-        handler: nonisolated(nonsending) @Sendable @escaping (
-            _ request: HTTPRequest,
-            _ requestContext: HTTPRequestContext,
-            _ requestBodyAndTrailers: consuming sending RequestReader,
-            _ responseSender: consuming sending HTTPResponseSender<ResponseWriter>
-        ) async throws -> Void
+        handler:
+            nonisolated(nonsending) @Sendable @escaping (
+                _ request: HTTPRequest,
+                _ requestContext: HTTPRequestContext,
+                _ requestBodyAndTrailers: consuming sending RequestReader,
+                _ responseSender: consuming sending HTTPResponseSender<ResponseWriter>
+            ) async throws -> Void
     ) async throws {
         try await self.serve(handler: HTTPServerClosureRequestHandler(handler: handler))
     }

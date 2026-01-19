@@ -6,6 +6,7 @@
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -76,7 +77,7 @@ import X509
 /// }
 /// ```
 @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-public struct NIOHTTPServer: HTTPServerProtocol {
+public struct NIOHTTPServer: HTTPServer {
     public typealias RequestReader = HTTPRequestConcludingAsyncReader
     public typealias ResponseWriter = HTTPResponseConcludingAsyncWriter
 
@@ -364,7 +365,8 @@ public struct NIOHTTPServer: HTTPServerProtocol {
                                     case .http2((let http2Connection, let http2Multiplexer)):
                                         do {
                                             let chainFuture = http2Connection.nioSSL_peerValidatedCertificateChain()
-                                            try await Self.$connectionContext.withValue(ConnectionContext(chainFuture)) {
+                                            try await Self.$connectionContext.withValue(ConnectionContext(chainFuture))
+                                            {
                                                 for try await http2StreamChannel in http2Multiplexer.inbound {
                                                     connectionGroup.addTask {
                                                         try await self.handleRequestChannel(
@@ -497,9 +499,12 @@ extension NIOHTTPServer {
                             return .certificateVerified(.init(.init(nioSSLCerts)))
 
                         case .failed(let error):
-                            self.logger.error("Custom certificate verification failed", metadata: [
-                                "failure-reason": .string(error.reason)
-                            ])
+                            self.logger.error(
+                                "Custom certificate verification failed",
+                                metadata: [
+                                    "failure-reason": .string(error.reason)
+                                ]
+                            )
                             return .failed
                         }
                     }

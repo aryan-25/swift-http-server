@@ -6,13 +6,14 @@
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
 //
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
 
-public import HTTPTypes
 public import AsyncStreaming
+public import HTTPTypes
 import NIOCore
 import NIOHTTPTypes
 import Synchronization
@@ -182,7 +183,6 @@ extension HTTPRequestConcludingAsyncReader: Sendable {}
 
 @available(*, unavailable)
 extension HTTPRequestConcludingAsyncReader.RequestBodyAsyncReader: Sendable {}
-
 
 extension Optional {
     mutating func sendingTake() -> sending Self {

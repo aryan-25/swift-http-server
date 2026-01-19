@@ -1,3 +1,17 @@
+//===----------------------------------------------------------------------===//
+//
+// This source file is part of the Swift HTTP Server open source project
+//
+// Copyright (c) 2025 Apple Inc. and the Swift HTTP Server project authors
+// Licensed under Apache License v2.0
+//
+// See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+//===----------------------------------------------------------------------===//
+
 /// A concrete implementation of ``Middleware`` that represents a single middleware or a chain of middlewares.
 ///
 /// `MiddlewareChain` provides a structured way to compose middleware components, allowing them
@@ -30,10 +44,11 @@ public struct MiddlewareChain<Input: ~Copyable, NextInput: ~Copyable>: Middlewar
     ///
     /// - Parameter middlewareFunc: A closure that implements the middleware's behavior.
     init(
-        middlewareFunc: nonisolated(nonsending) @Sendable @escaping (
-            consuming Input,
-            (consuming NextInput) async throws -> Void
-        ) async throws -> Void
+        middlewareFunc:
+            nonisolated(nonsending) @Sendable @escaping (
+                consuming Input,
+                (consuming NextInput) async throws -> Void
+            ) async throws -> Void
     ) {
         self.middlewareFunc = middlewareFunc
     }

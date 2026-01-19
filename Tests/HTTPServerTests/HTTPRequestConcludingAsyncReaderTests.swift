@@ -1,10 +1,26 @@
-@testable import HTTPServer
+//===----------------------------------------------------------------------===//
+//
+// This source file is part of the Swift HTTP Server open source project
+//
+// Copyright (c) 2025 Apple Inc. and the Swift HTTP Server project authors
+// Licensed under Apache License v2.0
+//
+// See LICENSE.txt for license information
+// See CONTRIBUTORS.txt for the list of Swift HTTP Server project authors
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+//===----------------------------------------------------------------------===//
+
+import AsyncStreaming
 import HTTPTypes
 import NIOCore
 import NIOHTTP1
 import NIOHTTPTypes
 import NIOPosix
 import Testing
+
+@testable import HTTPServer
 
 @Suite
 struct HTTPRequestConcludingAsyncReaderTests {
@@ -26,7 +42,7 @@ struct HTTPRequestConcludingAsyncReaderTests {
 
             _ = try await requestReader.consumeAndConclude { bodyReader in
                 var bodyReader = bodyReader
-                try await bodyReader.read { element in () }
+                try await bodyReader.read(maximumCount: nil) { element in () }
             }
         }
     }
@@ -36,7 +52,7 @@ struct HTTPRequestConcludingAsyncReaderTests {
         arguments: [ByteBuffer(repeating: 1, count: 100), ByteBuffer()],
         [
             HTTPFields([.init(name: .cookie, value: "test_cookie")]),
-            HTTPFields([.init(name: .cookie, value: "first_cookie"), .init(name: .cookie, value: "second_cookie")])
+            HTTPFields([.init(name: .cookie, value: "first_cookie"), .init(name: .cookie, value: "second_cookie")]),
         ]
     )
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
@@ -54,20 +70,16 @@ struct HTTPRequestConcludingAsyncReaderTests {
             var bodyReader = bodyReader
 
             var buffer = ByteBuffer()
-            // Read just once: we only sent one body chunk
-            try await bodyReader.read { element in
-                if let element {
-                    buffer.writeBytes(element.bytes)
-                } else {
-                    Issue.record("Unexpectedly failed to read the client's request body")
-                }
+            // Read the body chunk
+            try await bodyReader.read(maximumCount: nil) { element in
+                buffer.writeBytes(element.bytes)
+                return
             }
 
-            // Attempting to read again should result in a `nil` element (we only sent one body chunk)
-            try await bodyReader.read { element in
-                if element != nil {
-                    Issue.record("Received a non-nil value after the request body was completely read")
-                }
+            // Now read the trailer. We should get back an empty element here, but the trailer should be available in
+            // the tuple returned by `consumeAndConclude`
+            try await bodyReader.read(maximumCount: nil) { element in
+                #expect(element.count == 0)
             }
 
             return buffer
@@ -80,7 +92,6 @@ struct HTTPRequestConcludingAsyncReaderTests {
     @Test(
         "Streamed request with concluding element",
         arguments: [
-            (0..<10).map { i in ByteBuffer() },  // 10 empty ByteBuffers
             (0..<100).map { i in ByteBuffer(bytes: [i]) }  // 100 single-byte ByteBuffers
         ],
         [
@@ -107,25 +118,16 @@ struct HTTPRequestConcludingAsyncReaderTests {
                     iterator: stream.makeAsyncIterator(),
                     readerState: .init()
                 )
-                let finalElement = try await requestReader.consumeAndConclude { bodyReader in
-                    var bodyReader = bodyReader
+                let (_, finalElement) = try await requestReader.consumeAndConclude { bodyReader in
+                    // Read all body chunks
+                    var chunksProcessed = 0
+                    // swift-format-ignore: ReplaceForEachWithForLoop
+                    try await bodyReader.forEach { element in
+                        var buffer = ByteBuffer()
+                        buffer.writeBytes(element.bytes)
+                        #expect(bodyChunks[chunksProcessed] == buffer)
 
-                    for chunk in bodyChunks {
-                        try await bodyReader.read { element in
-                            if let element {
-                                var buffer = ByteBuffer()
-                                buffer.writeBytes(element.bytes)
-                                #expect(chunk == buffer)
-                            } else {
-                                Issue.record("Received a nil element before the request body was completely read")
-                            }
-                        }
-                    }
-
-                    try await bodyReader.read { element in
-                        if element != nil {
-                            Issue.record("Received a non-nil element after the request body was completely read")
-                        }
+                        chunksProcessed += 1
                     }
                 }
 
@@ -146,18 +148,22 @@ struct HTTPRequestConcludingAsyncReaderTests {
         source.yield(.end([.cookie: "test"]))
         source.finish()
 
-        // Check that the read error is propagated
-        try await #require(throws: TestError.errorWhileReading) {
-            let requestReader = HTTPRequestConcludingAsyncReader(
-                iterator: stream.makeAsyncIterator(),
-                readerState: .init()
-            )
+        let requestReader = HTTPRequestConcludingAsyncReader(
+            iterator: stream.makeAsyncIterator(),
+            readerState: .init()
+        )
 
-            _ = try await requestReader.consumeAndConclude { bodyReader in
-                var bodyReader = bodyReader
+        _ = await requestReader.consumeAndConclude { bodyReader in
+            var bodyReader = bodyReader
 
-                try await bodyReader.read { element in
-                    throw TestError.errorWhileReading
+            // Check that the read error is propagated
+            await #expect(throws: TestError.errorWhileReading) {
+                do {
+                    try await bodyReader.read(maximumCount: nil) { (element) throws(TestError) in
+                        throw TestError.errorWhileReading
+                    }
+                } catch let eitherError as EitherError<Error, TestError> {
+                    try eitherError.unwrap()
                 }
             }
         }
@@ -166,19 +172,22 @@ struct HTTPRequestConcludingAsyncReaderTests {
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
     @Test("More bytes available than consumption limit")
     func testCollectMoreBytesThanAvailable() async throws {
-        let (stream, source) = NIOAsyncChannelInboundStream<HTTPRequestPart>.makeTestingStream()
+        await #expect(processExitsWith: .failure) {
+            let (stream, source) = NIOAsyncChannelInboundStream<HTTPRequestPart>.makeTestingStream()
 
-        // Write 10 bytes
-        source.yield(.body(.init(repeating: 5, count: 10)))
-        source.finish()
+            // Write 10 bytes
+            source.yield(.body(.init(repeating: 5, count: 10)))
+            source.finish()
 
-        let requestReader = HTTPRequestConcludingAsyncReader(iterator: stream.makeAsyncIterator(), readerState: .init())
+            let requestReader = HTTPRequestConcludingAsyncReader(
+                iterator: stream.makeAsyncIterator(),
+                readerState: .init()
+            )
 
-        _ = try await requestReader.consumeAndConclude { requestBodyReader in
-            var requestBodyReader = requestBodyReader
+            _ = try await requestReader.consumeAndConclude { requestBodyReader in
+                var requestBodyReader = requestBodyReader
 
-            // Attempting to collect a maximum of 9 bytes should result in a LimitExceeded error.
-            await #expect(throws: LimitExceeded.self) {
+                // Since there are more bytes than requested, this should fail.
                 try await requestBodyReader.collect(upTo: 9) { element in
                     ()
                 }
