@@ -51,9 +51,12 @@ struct NIOHTTPServerSwiftConfigurationTests {
             let config = ConfigReader(provider: provider)
             let snapshot = config.snapshot()
 
-            #expect(throws: Error.self) {
+            let error = #expect(throws: Error.self) {
                 try NIOHTTPServerConfiguration.BindTarget(config: snapshot)
             }
+            let configError = try #require(error)
+
+            #expect("Missing required config value for key: host." == "\(configError)")
         }
 
         @Test("Init fails with missing port")
@@ -63,9 +66,12 @@ struct NIOHTTPServerSwiftConfigurationTests {
             let config = ConfigReader(provider: provider)
             let snapshot = config.snapshot()
 
-            #expect(throws: Error.self) {
+            let error = #expect(throws: Error.self) {
                 try NIOHTTPServerConfiguration.BindTarget(config: snapshot)
             }
+            let configError = try #require(error)
+
+            #expect("Missing required config value for key: port." == "\(configError)")
         }
     }
 
@@ -177,9 +183,12 @@ struct NIOHTTPServerSwiftConfigurationTests {
             let config = ConfigReader(provider: provider)
             let snapshot = config.snapshot()
 
-            #expect(throws: Error.self) {
+            let error = #expect(throws: Error.self) {
                 try NIOHTTPServerConfiguration.TransportSecurity(config: snapshot)
             }
+            let configError = try #require(error)
+
+            #expect("Config value for key 'security' failed to cast to type TransportSecurityKind." == "\(configError)")
         }
 
         @Test("Custom verification callback without mTLS being enabled")
@@ -248,9 +257,12 @@ struct NIOHTTPServerSwiftConfigurationTests {
                 let config = ConfigReader(provider: provider)
                 let snapshot = config.snapshot()
 
-                #expect(throws: Error.self) {
+                let error = #expect(throws: Error.self) {
                     try NIOHTTPServerConfiguration.TransportSecurity(config: snapshot)
                 }
+                let configError = try #require(error)
+
+                #expect("Missing required config value for key: certificateChainPEMString." == "\(configError)")
             }
 
             @Test("Init fails with missing private key")
@@ -268,9 +280,12 @@ struct NIOHTTPServerSwiftConfigurationTests {
                 let config = ConfigReader(provider: provider)
                 let snapshot = config.snapshot()
 
-                #expect(throws: Error.self) {
+                let error = #expect(throws: Error.self) {
                     try NIOHTTPServerConfiguration.TransportSecurity(config: snapshot)
                 }
+                let configError = try #require(error)
+
+                #expect("Missing required config value for key: privateKeyPEMString." == "\(configError)")
             }
         }
 
@@ -392,9 +407,15 @@ struct NIOHTTPServerSwiftConfigurationTests {
                 let config = ConfigReader(provider: provider)
                 let snapshot = config.snapshot()
 
-                #expect(throws: Error.self) {
-                    _ = try NIOHTTPServerConfiguration.TransportSecurity(config: snapshot)
+                let error = #expect(throws: Error.self) {
+                    try NIOHTTPServerConfiguration.TransportSecurity(config: snapshot)
                 }
+                let configError = try #require(error)
+
+                #expect(
+                    "Config value for key 'certificateVerificationMode' failed to cast to type VerificationMode."
+                        == "\(configError)"
+                )
             }
 
             @Test("Default trust roots")
@@ -462,4 +483,4 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 }
-#endif // SwiftConfiguration
+#endif  // SwiftConfiguration
