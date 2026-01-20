@@ -22,12 +22,11 @@ import X509
 
 @testable import HTTPServer
 
-@Suite
-struct NIOHTTPServerSwiftConfigurationTests {
-    // MARK: - BindTarget Tests
-    @Test("BindTarget: valid host and port")
+@Suite("BindTarget")
+struct NIOHTTPServerBindTargetSwiftConfigurationTests {
+    @Test("Valid host and port")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-    func testBindTargetWithValidConfig() throws {
+    func testValidConfig() throws {
         let provider = InMemoryProvider(values: ["host": "localhost", "port": 8080])
 
         let config = ConfigReader(provider: provider)
@@ -42,9 +41,9 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
-    @Test("BindTarget: init fails with missing host")
+    @Test("Init fails with missing host")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-    func testBindTargetMissingHost() throws {
+    func testMissingHost() throws {
         let provider = InMemoryProvider(values: ["port": 8080])
         let config = ConfigReader(provider: provider)
         let snapshot = config.snapshot()
@@ -54,9 +53,9 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
-    @Test("BindTarget: init fails with missing port")
+    @Test("Init fails with missing port")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-    func testBindTargetMissingPort() throws {
+    func testMissingPort() throws {
         let provider = InMemoryProvider(values: ["host": "localhost"])
         let config = ConfigReader(provider: provider)
         let snapshot = config.snapshot()
@@ -65,12 +64,13 @@ struct NIOHTTPServerSwiftConfigurationTests {
             try NIOHTTPServerConfiguration.BindTarget(config: snapshot)
         }
     }
+}
 
-    // MARK: - BackPressureStrategy Tests
-
-    @Test("BackPressureStrategy: default values")
+@Suite("BackPressureStrategy")
+struct NIOHTTPServerBackPressureStrategySwiftConfigurationTests {
+    @Test("Default values")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-    func testBackPressureStrategyDefaults() throws {
+    func testDefaultValues() throws {
         // Don't provide anything. All values have defaults.
         let provider = InMemoryProvider(values: [:])
         let config = ConfigReader(provider: provider)
@@ -80,14 +80,14 @@ struct NIOHTTPServerSwiftConfigurationTests {
 
         switch strategy.backing {
         case .watermark(let low, let high):
-            #expect(low == NIOHTTPServerConfiguration.BackPressureStrategy.DEFAULT_WATERMARK_LOW)
-            #expect(high == NIOHTTPServerConfiguration.BackPressureStrategy.DEFAULT_WATERMARK_HIGH)
+            #expect(low == NIOHTTPServerConfiguration.BackPressureStrategy.defaultWatermarkLow)
+            #expect(high == NIOHTTPServerConfiguration.BackPressureStrategy.defaultWatermarkHigh)
         }
     }
 
-    @Test("BackPressureStrategy: custom values")
+    @Test("Custom values")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-    func testBackPressureStrategyCustomValues() throws {
+    func testCustomValues() throws {
         let provider = InMemoryProvider(values: ["low": 5, "high": 20])
         let config = ConfigReader(provider: provider)
         let snapshot = config.snapshot()
@@ -101,9 +101,9 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
-    @Test("BackPressureStrategy: partial custom values")
+    @Test("Partial custom values")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-    func testBackPressureStrategyPartialCustom() throws {
+    func testPartialCustomValues() throws {
         let provider = InMemoryProvider(values: ["low": 3])
         let config = ConfigReader(provider: provider)
         let snapshot = config.snapshot()
@@ -113,29 +113,30 @@ struct NIOHTTPServerSwiftConfigurationTests {
         switch strategy.backing {
         case .watermark(let low, let high):
             #expect(low == 3)
-            #expect(high == NIOHTTPServerConfiguration.BackPressureStrategy.DEFAULT_WATERMARK_HIGH)
+            #expect(high == NIOHTTPServerConfiguration.BackPressureStrategy.defaultWatermarkHigh)
         }
     }
+}
 
-    // MARK: - HTTP2 Tests
-
-    @Test("HTTP2: default values")
+@Suite("HTTP2")
+struct NIOHTTPServerHTTP2SwiftConfigurationTests {
+    @Test("Default values")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-    func testHTTP2Defaults() throws {
+    func testDefaultValues() throws {
         let provider = InMemoryProvider(values: [:])
         let config = ConfigReader(provider: provider)
         let snapshot = config.snapshot()
 
         let http2 = NIOHTTPServerConfiguration.HTTP2(config: snapshot)
 
-        #expect(http2.maxFrameSize == NIOHTTPServerConfiguration.HTTP2.DEFAULT_MAX_FRAME_SIZE)
-        #expect(http2.targetWindowSize == NIOHTTPServerConfiguration.HTTP2.DEFAULT_TARGET_WINDOW_SIZE)
+        #expect(http2.maxFrameSize == NIOHTTPServerConfiguration.HTTP2.defaultMaxFrameSize)
+        #expect(http2.targetWindowSize == NIOHTTPServerConfiguration.HTTP2.defaultTargetWindowSize)
         #expect(http2.maxConcurrentStreams == nil)
     }
 
-    @Test("HTTP2: custom values")
+    @Test("Custom values")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-    func testHTTP2CustomValues() throws {
+    func testCustomValues() throws {
         let provider = InMemoryProvider(values: ["maxFrameSize": 1, "targetWindowSize": 2, "maxConcurrentStreams": 3])
         let config = ConfigReader(provider: provider)
         let snapshot = config.snapshot()
@@ -147,9 +148,9 @@ struct NIOHTTPServerSwiftConfigurationTests {
         #expect(http2.maxConcurrentStreams == 3)
     }
 
-    @Test("HTTP2: partial custom values")
+    @Test("Partial custom values")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-    func testHTTP2PartialCustom() throws {
+    func testPartialCustomValues() throws {
         let provider = InMemoryProvider(values: ["maxFrameSize": 5])
         let config = ConfigReader(provider: provider)
         let snapshot = config.snapshot()
@@ -157,15 +158,16 @@ struct NIOHTTPServerSwiftConfigurationTests {
         let http2 = NIOHTTPServerConfiguration.HTTP2(config: snapshot)
 
         #expect(http2.maxFrameSize == 5)
-        #expect(http2.targetWindowSize == NIOHTTPServerConfiguration.HTTP2.DEFAULT_TARGET_WINDOW_SIZE)
+        #expect(http2.targetWindowSize == NIOHTTPServerConfiguration.HTTP2.defaultTargetWindowSize)
         #expect(http2.maxConcurrentStreams == nil)
     }
+}
 
-    // MARK: - TransportSecurity Tests
-
-    @Test("TransportSecurity: invalid security type")
+@Suite("TransportSecurity")
+struct NIOHTTPServerTransportSecuritySwiftConfigurationTests {
+    @Test("Invalid security type")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-    func testTransportSecurityInvalidSecurityType() throws {
+    func testInvalidSecurityType() throws {
         let provider = InMemoryProvider(values: ["security": "<this_security_type_does_not_exist>"])
         let config = ConfigReader(provider: provider)
         let snapshot = config.snapshot()
@@ -175,9 +177,9 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
-    @Test("TransportSecurity: custom verification callback without mTLS being enabled")
+    @Test("Custom verification callback without mTLS being enabled")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-    func testTransportSecurityCannotInitializeWithCustomCallbackWhenMTLSNotEnabled() throws {
+    func testCannotInitializeWithCustomCallbackWhenMTLSNotEnabled() throws {
         let provider = InMemoryProvider(values: ["security": "tls"])
         let config = ConfigReader(provider: provider)
         let snapshot = config.snapshot()
@@ -196,9 +198,9 @@ struct NIOHTTPServerSwiftConfigurationTests {
         #expect(error as? NIOHTTPServerConfigurationError == .customVerificationCallbackProvidedWhenNotUsingMTLS)
     }
 
-    // MARK: - TransportSecurity TLS Tests
+    // MARK: - TLS Tests
 
-    @Test("TransportSecurity.TLS: valid config")
+    @Test("TLS: valid config")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
     func testTLSWithValidConfig() throws {
         let chain = try TestCA.makeSelfSignedChain()
@@ -226,7 +228,7 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
-    @Test("TransportSecurity.TLS: init fails with missing certificate")
+    @Test("TLS: init fails with missing certificate")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
     func testTLSMissingCertificate() throws {
         let chain = try TestCA.makeSelfSignedChain()
@@ -246,7 +248,7 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
-    @Test("TransportSecurity.TLS: init fails with missing private key")
+    @Test("TLS: init fails with missing private key")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
     func testTLSMissingPrivateKey() throws {
         let chain = try TestCA.makeSelfSignedChain()
@@ -266,9 +268,9 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
-    // MARK: - TransportSecurity Reloading TLS Tests
+    // MARK: - Reloading TLS Tests
 
-    @Test("TransportSecurity.reloadingTLS: valid config")
+    @Test("Reloading TLS: valid config")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
     func testReloadingTLS() async throws {
         let provider = InMemoryProvider(
@@ -290,9 +292,9 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
-    // MARK: - TransportSecurity mTLS Tests
+    // MARK: - mTLS Tests
 
-    @Test("TransportSecurity.mTLS: custom verification callback")
+    @Test("mTLS: custom verification callback")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
     func testMTLSWithValidConfig() throws {
         let serverChain = try TestCA.makeSelfSignedChain()
@@ -334,7 +336,7 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
-    @Test("TransportSecurity.mTLS: optional verification mode")
+    @Test("mTLS: optional verification mode")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
     func testMTLSWithOptionalVerification() throws {
         let serverChain = try TestCA.makeSelfSignedChain()
@@ -364,7 +366,7 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
-    @Test("TransportSecurity.mTLS: invalid verification mode")
+    @Test("mTLS: invalid verification mode")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
     func testMTLSWithInvalidVerificationMode() throws {
         let serverChain = try TestCA.makeSelfSignedChain()
@@ -388,7 +390,7 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
-    @Test("TransportSecurity.mTLS: default trust roots")
+    @Test("mTLS: default trust roots")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
     func testMTLSDefaultTrustRoots() throws {
         let serverChain = try TestCA.makeSelfSignedChain()
@@ -418,9 +420,9 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
-    // MARK: - TransportSecurity Reloading mTLS Tests
+    // MARK: - Reloading mTLS Tests
 
-    @Test("TransportSecurity.reloadingMTLS: valid config")
+    @Test("Reloading mTLS: valid config")
     @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
     func testReloadingMTLSWithValidConfig() async throws {
         let chain = try TestCA.makeSelfSignedChain()

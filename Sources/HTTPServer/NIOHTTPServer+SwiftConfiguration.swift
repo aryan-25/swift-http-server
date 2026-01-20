@@ -263,11 +263,11 @@ extension NIOHTTPServerConfiguration.BackPressureStrategy {
             backing: .watermark(
                 low: config.int(
                     forKey: "low",
-                    default: NIOHTTPServerConfiguration.BackPressureStrategy.DEFAULT_WATERMARK_LOW
+                    default: NIOHTTPServerConfiguration.BackPressureStrategy.defaultWatermarkLow
                 ),
                 high: config.int(
                     forKey: "high",
-                    default: NIOHTTPServerConfiguration.BackPressureStrategy.DEFAULT_WATERMARK_HIGH
+                    default: NIOHTTPServerConfiguration.BackPressureStrategy.defaultWatermarkHigh
                 )
             )
         )
@@ -290,11 +290,11 @@ extension NIOHTTPServerConfiguration.HTTP2 {
         self.init(
             maxFrameSize: config.int(
                 forKey: "maxFrameSize",
-                default: NIOHTTPServerConfiguration.HTTP2.DEFAULT_MAX_FRAME_SIZE
+                default: NIOHTTPServerConfiguration.HTTP2.defaultMaxFrameSize
             ),
             targetWindowSize: config.int(
                 forKey: "targetWindowSize",
-                default: NIOHTTPServerConfiguration.HTTP2.DEFAULT_TARGET_WINDOW_SIZE
+                default: NIOHTTPServerConfiguration.HTTP2.defaultTargetWindowSize
             ),
             /// The default value, ``NIOHTTPServerConfiguration.HTTP2.DEFAULT_TARGET_WINDOW_SIZE``, is `nil`. However,
             /// we can only specify a non-nil `default` argument to `config.int(...)`. But `config.int(...)` already

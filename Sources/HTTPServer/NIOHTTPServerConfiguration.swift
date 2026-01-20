@@ -213,17 +213,22 @@ public struct NIOHTTPServerConfiguration: Sendable {
             self.maxConcurrentStreams = maxConcurrentStreams
         }
 
-        static let DEFAULT_MAX_FRAME_SIZE = 1 << 14
-        static let DEFAULT_TARGET_WINDOW_SIZE = (1 << 16) - 1
-        static let DEFAULT_MAX_CONCURRENT_STREAMS: Int? = nil
+        @inlinable
+        static var defaultMaxFrameSize: Int { 1 << 14 }
+
+        @inlinable
+        static var defaultTargetWindowSize: Int { (1 << 16) - 1 }
+
+        @inlinable
+        static var defaultMaxConcurrentStreams: Int? { nil }
 
         /// Default values. The max frame size defaults to 2^14, the target window size defaults to 2^16-1, and
         /// the max concurrent streams default to infinite.
         public static var defaults: Self {
             Self(
-                maxFrameSize: Self.DEFAULT_MAX_FRAME_SIZE,
-                targetWindowSize: Self.DEFAULT_TARGET_WINDOW_SIZE,
-                maxConcurrentStreams: Self.DEFAULT_MAX_CONCURRENT_STREAMS
+                maxFrameSize: Self.defaultMaxFrameSize,
+                targetWindowSize: Self.defaultTargetWindowSize,
+                maxConcurrentStreams: Self.defaultMaxConcurrentStreams
             )
         }
     }
@@ -249,15 +254,18 @@ public struct NIOHTTPServerConfiguration: Sendable {
             .init(backing: .watermark(low: low, high: high))
         }
 
-        static let DEFAULT_WATERMARK_LOW = 2
-        static let DEFAULT_WATERMARK_HIGH = 10
+        @inlinable
+        static var defaultWatermarkLow: Int { 2 }
+
+        @inlinable
+        static var defaultWatermarkHigh: Int { 10 }
 
         /// Default values. The watermark low value defaults to 2, and the watermark high value default to 10.
         public static var defaults: Self {
             Self.init(
                 backing: .watermark(
-                    low: Self.DEFAULT_WATERMARK_LOW,
-                    high: Self.DEFAULT_WATERMARK_HIGH
+                    low: Self.defaultWatermarkLow,
+                    high: Self.defaultWatermarkHigh
                 )
             )
         }
