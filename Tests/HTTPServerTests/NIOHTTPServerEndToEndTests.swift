@@ -45,18 +45,29 @@ struct NIOHTTPServerEndToEndTests {
                     try await outbound.write(.head(.init(method: .get, scheme: "", authority: "", path: "/")))
                     try await outbound.write(.end(nil))
 
-                    outerLoop: for try await response in inbound {
-                        switch response {
-                        case .head(let response):
-                            #expect(response.status == 200)
-                            #expect(response.headerFields == [.transferEncoding: "chunked"])
-                        case .body(let body):
-                            #expect(body == .init([1, 2]))
-                        case .end(let trailers):
-                            #expect(trailers == [.serverTiming: "test"])
-                            break outerLoop
-                        }
+                    var inboundIterator = inbound.makeAsyncIterator()
+
+                    let head = try await inboundIterator.next()
+                    guard case .head(let responseHead) = head else {
+                        Issue.record("Expected response head but received \(head).")
+                        return
                     }
+                    #expect(responseHead.status == 200)
+                    #expect(responseHead.headerFields == [.transferEncoding: "chunked"])
+
+                    let body = try await inboundIterator.next()
+                    guard case .body(let responseBody) = body else {
+                        Issue.record("Expected response body but received \(body).")
+                        return
+                    }
+                    #expect(responseBody == .init([1, 2]))
+
+                    let end = try await inboundIterator.next()
+                    guard case .end(let responseEnd) = end else {
+                        Issue.record("Expected response end but received \(end).")
+                        return
+                    }
+                    #expect(responseEnd == [.serverTiming: "test"])
                 }
             }
         }
@@ -101,17 +112,28 @@ struct NIOHTTPServerEndToEndTests {
                         try await outbound.write(.head(.init(method: .get, scheme: "", authority: "", path: "/")))
                         try await outbound.write(.end(nil))
 
-                        outerLoop: for try await response in inbound {
-                            switch response {
-                            case .head(let response):
-                                #expect(response.status == 200)
-                            case .body(let body):
-                                #expect(body == .init([1, 2]))
-                            case .end(let trailers):
-                                #expect(trailers == [.serverTiming: "test"])
-                                break outerLoop
-                            }
+                        var inboundIterator = inbound.makeAsyncIterator()
+
+                        let head = try await inboundIterator.next()
+                        guard case .head(let responseHead) = head else {
+                            Issue.record("Expected response head but received \(head).")
+                            return
                         }
+                        #expect(responseHead.status == 200)
+
+                        let body = try await inboundIterator.next()
+                        guard case .body(let responseBody) = body else {
+                            Issue.record("Expected response body but received \(body).")
+                            return
+                        }
+                        #expect(responseBody == .init([1, 2]))
+
+                        let end = try await inboundIterator.next()
+                        guard case .end(let responseEnd) = end else {
+                            Issue.record("Expected response end but received \(end).")
+                            return
+                        }
+                        #expect(responseEnd == [.serverTiming: "test"])
                     }
                 }
             }

@@ -84,14 +84,13 @@ struct HTTP1ClientServerProvider {
         // So, we create a client channel, and use it to send requests and observe responses in terms of HTTP types.
         let (clientTestChannel, clientAsyncChannel) = try await self.setUpClientConnection()
 
-        try await withThrowingTaskGroup { group in
+        try await withThrowingDiscardingTaskGroup { group in
             // We must forward all client outbound writes to the server and vice-versa.
             group.addTask { try await clientTestChannel.glueTo(serverTestConnectionChannel) }
 
             try await body(clientAsyncChannel)
 
             try await serverTestConnectionChannel.close()
-            try await group.next()
         }
     }
 

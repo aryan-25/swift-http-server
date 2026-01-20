@@ -105,14 +105,13 @@ struct HTTPSecureUpgradeClientServerProvider {
             tlsConfiguration: clientTLSConfiguration
         )
 
-        try await withThrowingTaskGroup { group in
+        try await withThrowingDiscardingTaskGroup { group in
             // We must forward all client outbound writes to the server and vice-versa.
             group.addTask { try await clientTestChannel.glueTo(serverTestConnectionChannel) }
 
             try await body(.init(negotiationResult: try await clientNegotiatedConnectionFuture.get()))
 
             try await serverTestConnectionChannel.close()
-            try await group.next()
         }
     }
 

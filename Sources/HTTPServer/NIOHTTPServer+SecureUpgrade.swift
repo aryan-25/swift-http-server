@@ -118,7 +118,7 @@ extension NIOHTTPServer {
         }
     }
 
-    private func _serveSecureUpgrade(
+    func _serveSecureUpgrade(
         serverChannel: NIOAsyncChannel<EventLoopFuture<NegotiatedChannel>, Never>,
         handler: some HTTPServerRequestHandler<RequestReader, ResponseWriter>
     ) async throws {
@@ -164,27 +164,6 @@ extension NIOHTTPServer {
                 }
             }
         }
-    }
-
-    func serveSecureUpgradeWithTestChannel(
-        testChannel: NIOAsyncTestingChannel,
-        handler: some HTTPServerRequestHandler<RequestReader, ResponseWriter>
-    ) async throws {
-        // The server requires a NIOAsyncChannel, so we create one from the test channel
-        let testAsyncChannel = try await testChannel.eventLoop.submit {
-            try NIOAsyncChannel<EventLoopFuture<NIOHTTPServer.NegotiatedChannel>, Never>(
-                wrappingChannelSynchronously: testChannel,
-                configuration: .init()
-            )
-        }.get()
-
-        // Trick the server into thinking it's been bound to an address so that we don't leak the listening address
-        // promise. In reality, the server hasn't been bound to any address: we will manually feed in requests and
-        // observe responses.
-        try self.addressBound(.init(ipAddress: "127.0.0.1", port: 8000))
-        _ = try await self.listeningAddress
-
-        try await self._serveSecureUpgrade(serverChannel: testAsyncChannel, handler: handler)
     }
 }
 

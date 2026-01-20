@@ -69,7 +69,7 @@ extension NIOHTTPServer {
         }
     }
 
-    private func _serveInsecureHTTP1_1(
+    func _serveInsecureHTTP1_1(
         serverChannel: NIOAsyncChannel<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, Never>,
         handler: some HTTPServerRequestHandler<RequestReader, ResponseWriter>
     ) async throws {
@@ -85,26 +85,5 @@ extension NIOHTTPServer {
                 }
             }
         }
-    }
-
-    func serveInsecureHTTP1_1WithTestChannel(
-        testChannel: NIOAsyncTestingChannel,
-        handler: some HTTPServerRequestHandler<RequestReader, ResponseWriter>
-    ) async throws {
-        // The server requires a NIOAsyncChannel, so we create one from the test channel
-        let serverTestAsyncChannel = try await testChannel.eventLoop.submit {
-            try NIOAsyncChannel<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, Never>(
-                wrappingChannelSynchronously: testChannel,
-                configuration: .init()
-            )
-        }.get()
-
-        // Trick the server into thinking it's been bound to an address so that we don't leak the listening address
-        // promise. In reality, the server hasn't been bound to any address: we will manually feed in requests and
-        // observe responses.
-        try self.addressBound(.init(ipAddress: "127.0.0.1", port: 8000))
-        _ = try await self.listeningAddress
-
-        try await _serveInsecureHTTP1_1(serverChannel: serverTestAsyncChannel, handler: handler)
     }
 }
