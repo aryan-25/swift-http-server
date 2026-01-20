@@ -37,7 +37,7 @@ let package = Package(
     ],
     traits: [
         .trait(name: "SwiftConfiguration"),
-        .default(enabledTraits: ["SwiftConfiguration"])
+        .default(enabledTraits: ["SwiftConfiguration"]),
     ],
     dependencies: [
         .package(

@@ -343,4 +343,4 @@ extension CertificateVerificationMode {
         }
     }
 }
-#endif // SwiftConfiguration
+#endif  // SwiftConfiguration
