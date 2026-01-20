@@ -35,6 +35,10 @@ let package = Package(
             targets: ["HTTPServer"]
         )
     ],
+    traits: [
+        .trait(name: "SwiftConfiguration"),
+        .default(enabledTraits: ["SwiftConfiguration"])
+    ],
     dependencies: [
         .package(
             url: "https://github.com/FranzBusch/swift-collections.git",
@@ -81,7 +85,11 @@ let package = Package(
                 .product(name: "NIOHTTPTypesHTTP1", package: "swift-nio-extras"),
                 .product(name: "NIOHTTPTypesHTTP2", package: "swift-nio-extras"),
                 .product(name: "NIOCertificateReloading", package: "swift-nio-extras"),
-                .product(name: "Configuration", package: "swift-configuration"),
+                .product(
+                    name: "Configuration",
+                    package: "swift-configuration",
+                    condition: .when(traits: ["SwiftConfiguration"])
+                ),
             ],
             swiftSettings: extraSettings
         ),

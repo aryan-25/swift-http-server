@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#if SwiftConfiguration
 import Configuration
 import Crypto
 import Foundation
@@ -461,3 +462,4 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 }
+#endif // SwiftConfiguration
