@@ -22,10 +22,8 @@ import X509
 
 @testable import HTTPServer
 
-typealias ClientChannel = NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>
-
 @available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, visionOS 26.0, *)
-func setUpClient(host: String, port: Int) async throws -> ClientChannel {
+func setUpClient(host: String, port: Int) async throws -> NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart> {
     try await ClientBootstrap(group: .singletonMultiThreadedEventLoopGroup)
         .channelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
         .connect(to: try .init(ipAddress: host, port: port)) { channel in
@@ -33,7 +31,10 @@ func setUpClient(host: String, port: Int) async throws -> ClientChannel {
                 try channel.pipeline.syncOperations.addHTTPClientHandlers()
                 try channel.pipeline.syncOperations.addHandler(HTTP1ToHTTPClientCodec())
 
-                return try ClientChannel(wrappingChannelSynchronously: channel, configuration: .init())
+                return try NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>(
+                    wrappingChannelSynchronously: channel,
+                    configuration: .init()
+                )
             }
         }
 }
@@ -44,7 +45,7 @@ func setUpClientWithMTLS(
     chain: ChainPrivateKeyPair,
     trustRoots: [Certificate],
     applicationProtocol: String,
-) async throws -> ClientChannel {
+) async throws -> NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart> {
     var clientTLSConfig = TLSConfiguration.makeClientConfiguration()
     clientTLSConfig.certificateChain = [try NIOSSLCertificateSource(chain.leaf)]
     clientTLSConfig.privateKey = .privateKey(try .init(chain.privateKey))
@@ -67,7 +68,10 @@ func setUpClientWithMTLS(
                             try channel.pipeline.syncOperations.addHTTPClientHandlers()
                             try channel.pipeline.syncOperations.addHandlers(HTTP1ToHTTPClientCodec())
 
-                            return try ClientChannel(wrappingChannelSynchronously: channel, configuration: .init())
+                            return try NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>(
+                                wrappingChannelSynchronously: channel,
+                                configuration: .init()
+                            )
                         }
                     },
                     http2ConnectionInitializer: { channel in
@@ -87,7 +91,10 @@ func setUpClientWithMTLS(
         return try await http2Channel.openStream { channel in
             channel.eventLoop.makeCompletedFuture {
                 try channel.pipeline.syncOperations.addHandler(HTTP2FramePayloadToHTTPClientCodec())
-                return try ClientChannel(wrappingChannelSynchronously: channel, configuration: .init())
+                return try NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>(
+                    wrappingChannelSynchronously: channel,
+                    configuration: .init()
+                )
             }
         }
     }
