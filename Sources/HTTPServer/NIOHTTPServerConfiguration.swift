@@ -213,13 +213,22 @@ public struct NIOHTTPServerConfiguration: Sendable {
             self.maxConcurrentStreams = maxConcurrentStreams
         }
 
+        @inlinable
+        static var defaultMaxFrameSize: Int { 1 << 14 }
+
+        @inlinable
+        static var defaultTargetWindowSize: Int { (1 << 16) - 1 }
+
+        @inlinable
+        static var defaultMaxConcurrentStreams: Int? { nil }
+
         /// Default values. The max frame size defaults to 2^14, the target window size defaults to 2^16-1, and
         /// the max concurrent streams default to infinite.
         public static var defaults: Self {
             Self(
-                maxFrameSize: 1 << 14,
-                targetWindowSize: (1 << 16) - 1,
-                maxConcurrentStreams: nil
+                maxFrameSize: Self.defaultMaxFrameSize,
+                targetWindowSize: Self.defaultTargetWindowSize,
+                maxConcurrentStreams: Self.defaultMaxConcurrentStreams
             )
         }
     }
@@ -232,7 +241,7 @@ public struct NIOHTTPServerConfiguration: Sendable {
 
         internal let backing: Backing
 
-        private init(backing: Backing) {
+        init(backing: Backing) {
             self.backing = backing
         }
 
@@ -243,6 +252,22 @@ public struct NIOHTTPServerConfiguration: Sendable {
         /// - Returns: A low/high watermark strategy with the configured thresholds.
         public static func watermark(low: Int, high: Int) -> Self {
             .init(backing: .watermark(low: low, high: high))
+        }
+
+        @inlinable
+        static var defaultWatermarkLow: Int { 2 }
+
+        @inlinable
+        static var defaultWatermarkHigh: Int { 10 }
+
+        /// Default values. The watermark low value defaults to 2, and the watermark high value default to 10.
+        public static var defaults: Self {
+            Self.init(
+                backing: .watermark(
+                    low: Self.defaultWatermarkLow,
+                    high: Self.defaultWatermarkHigh
+                )
+            )
         }
     }
 
@@ -268,7 +293,7 @@ public struct NIOHTTPServerConfiguration: Sendable {
     public init(
         bindTarget: BindTarget,
         transportSecurity: TransportSecurity = .plaintext,
-        backpressureStrategy: BackPressureStrategy = .watermark(low: 2, high: 10),
+        backpressureStrategy: BackPressureStrategy = .defaults,
         http2: HTTP2 = .defaults
     ) {
         self.bindTarget = bindTarget

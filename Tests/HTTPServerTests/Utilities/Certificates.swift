@@ -20,6 +20,17 @@ struct ChainPrivateKeyPair {
     let leaf: Certificate
     let ca: Certificate
     let privateKey: Certificate.PrivateKey
+
+    var chain: [Certificate] {
+        [self.leaf, self.ca]
+    }
+
+    var chainPEMString: String {
+        get throws {
+            let certs = [try self.leaf.serializeAsPEM().pemString, try self.ca.serializeAsPEM().pemString]
+            return certs.joined(separator: "\n")
+        }
+    }
 }
 
 struct TestCA {
