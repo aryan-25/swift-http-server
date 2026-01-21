@@ -41,8 +41,93 @@ public struct HTTPRequestConcludingAsyncReader: ConcludingAsyncReader, ~Copyable
         /// The HTTP trailer fields captured at the end of the request.
         fileprivate var state: ReaderState
 
-        /// The iterator that provides HTTP request parts from the underlying channel.
-        private var iterator: NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator
+        struct RequestBodyStateMachine {
+            enum State {
+                // The request body is currently being read: expecting more request body parts or a request end part.
+                case readingBody(ReadingBodyState)
+
+                // The request end part was received. We have finished.
+                case finished
+
+                enum ReadingBodyState {
+                    // Not yet received any request body parts
+                    case initial
+
+                    // `read` was called with a `maximumCount` value that was lower than the bytes available. The excess
+                    // bytes are stored here so they can be dispensed in future calls to `read`.
+                    case excess(ByteBuffer)
+
+                    // No excess bytes currently needing to be stored
+                    case noExcess
+                }
+            }
+
+            private var state: State
+
+            /// The iterator that provides HTTP request parts from the underlying channel.
+            private var iterator: NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator
+
+            init(iterator: NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator) {
+                self.state = .readingBody(.initial)
+                self.iterator = iterator
+            }
+
+            enum ReadResult {
+                case readBody(ByteBuffer)
+                case readEnd(HTTPFields?)
+                case streamFinished
+            }
+
+            mutating func read(limit: Int?) async throws -> ReadResult {
+                switch self.state {
+                case .readingBody(let readingBodyState):
+                    var bodyElement: ByteBuffer
+
+                    switch readingBodyState {
+                    case .excess(let excessElement):
+                        // There was an excess of bytes from the previous call to `read`. We read directly from this
+                        // excess and don't advance the iterator.
+                        bodyElement = excessElement
+
+                    case .initial, .noExcess:
+                        // There is no excess from previous reads. We obtain the next element from the stream.
+                        let requestPart = try await self.iterator.next(isolation: #isolation)
+
+                        switch requestPart {
+                        case .head:
+                            fatalError("Unexpectedly received a request head.")
+
+                        case .none:
+                            fatalError("The stream unexpectedly ended before receiving a request end.")
+
+                        case .body(let element):
+                            bodyElement = element
+
+                        case .end(let trailers):
+                            self.state = .finished
+                            return .readEnd(trailers)
+                        }
+                    }
+
+                    if let limit, limit < bodyElement.readableBytes,
+                        let truncated = bodyElement.readSlice(length: limit)
+                    {
+                        // There are more bytes available than `limit`. We must store the excess in a buffer for it to
+                        // be consumed in the next call to `read`.
+                        self.state = .readingBody(.excess(bodyElement))
+                        return .readBody(truncated)
+                    }
+
+                    self.state = .readingBody(.noExcess)
+                    return .readBody(bodyElement)
+
+                case .finished:
+                    return .streamFinished
+                }
+            }
+        }
+
+        var requestBodyStateMachine: RequestBodyStateMachine
 
         /// Initializes a new request body reader with the given NIO async channel iterator.
         ///
@@ -51,7 +136,7 @@ public struct HTTPRequestConcludingAsyncReader: ConcludingAsyncReader, ~Copyable
             iterator: consuming sending NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator,
             readerState: ReaderState
         ) {
-            self.iterator = iterator
+            self.requestBodyStateMachine = .init(iterator: iterator)
             self.state = readerState
         }
 
@@ -65,37 +150,28 @@ public struct HTTPRequestConcludingAsyncReader: ConcludingAsyncReader, ~Copyable
             maximumCount: Int?,
             body: nonisolated(nonsending) (consuming Span<ReadElement>) async throws(Failure) -> Return
         ) async throws(EitherError<ReadFailure, Failure>) -> Return {
-            let requestPart: HTTPRequestPart?
+            let readResult: RequestBodyStateMachine.ReadResult
             do {
-                requestPart = try await self.iterator.next(isolation: #isolation)
+                readResult = try await self.requestBodyStateMachine.read(limit: maximumCount)
             } catch {
                 throw .first(error)
             }
 
-            let readElement: ByteBuffer
-
-            switch requestPart {
-            case .head:
-                fatalError()
-            case .body(let element):
-                if let maximumCount, maximumCount < element.readableBytes {
-                    throw .first(LimitExceeded())
-                }
-
-                readElement = element
-            case .end(let trailers):
-                self.state.wrapped.withLock { state in
-                    state.trailers = trailers
-                    state.finishedReading = true
-                }
-
-                readElement = .init()
-            case .none:
-                readElement = .init()
-            }
-
             do {
-                return try await body(Array(buffer: readElement).span)
+                switch readResult {
+                case .readBody(let readElement):
+                    return try await body(Array(buffer: readElement).span)
+
+                case .readEnd(let trailers):
+                    self.state.wrapped.withLock { state in
+                        state.trailers = trailers
+                        state.finishedReading = true
+                    }
+                    return try await body(.init())
+
+                case .streamFinished:
+                    return try await body(.init())
+                }
             } catch {
                 throw .second(error)
             }
