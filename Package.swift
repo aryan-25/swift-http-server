@@ -35,6 +35,10 @@ let package = Package(
             targets: ["HTTPServer"]
         )
     ],
+    traits: [
+        .trait(name: "SwiftConfiguration"),
+        .default(enabledTraits: ["SwiftConfiguration"]),
+    ],
     dependencies: [
         .package(
             url: "https://github.com/FranzBusch/swift-collections.git",
@@ -44,10 +48,11 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-distributed-tracing.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-certificates.git", from: "1.16.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.2"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.36.0"),
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.30.0"),
         .package(url: "https://github.com/apple/swift-nio-http2.git", from: "1.0.0"),
+        .package(url: "https://github.com/apple/swift-configuration", from: "1.0.0"),
     ],
     targets: [
         .executableTarget(
@@ -80,6 +85,11 @@ let package = Package(
                 .product(name: "NIOHTTPTypesHTTP1", package: "swift-nio-extras"),
                 .product(name: "NIOHTTPTypesHTTP2", package: "swift-nio-extras"),
                 .product(name: "NIOCertificateReloading", package: "swift-nio-extras"),
+                .product(
+                    name: "Configuration",
+                    package: "swift-configuration",
+                    condition: .when(traits: ["SwiftConfiguration"])
+                ),
             ],
             swiftSettings: extraSettings
         ),
