@@ -77,12 +77,7 @@ let package = Package(
             name: "HTTPServer",
             dependencies: [
                 "AsyncStreaming",
-                .product(name: "DequeModule", package: "swift-collections"),
-                .product(name: "BasicContainers", package: "swift-collections"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
-                .product(name: "Logging", package: "swift-log"),
-                .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
             swiftSettings: extraSettings
         ),
