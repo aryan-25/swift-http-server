@@ -63,7 +63,7 @@ extension NIOHTTPServer {
         }
     }
 
-    /// Creates a ServerBootstrap and configures it to accept HTTP/1.1 connections.
+    /// Creates a `ServerBootstrap` and configures it to accept HTTP/1.1 connections.
     func setupHTTP1_1ServerChannels(
         bindTargets: [NIOHTTPServerConfiguration.BindTarget]
     ) async throws -> [NIOAsyncChannel<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, Never>] {
@@ -111,10 +111,11 @@ extension NIOHTTPServer {
         return serverChannels
     }
 
-    /// Configures the HTTP/1.1 server pipeline and wraps the channel in a `NIOAsyncChannel`.
+    /// Adds HTTP/1.1 channel handlers to the provided connection child channel, and returns the channel wrapped in a
+    /// `NIOAsyncChannel`.
     ///
     /// Set `schemeIsHTTPS` to `true` if the connection uses HTTPS, or `false` for HTTP. `HTTP1ToHTTPServerCodec` uses
-    /// this to set the URI scheme on incoming request head parts.
+    /// this value to set the URI scheme on incoming request head parts.
     func setupHTTP1_1ConnectionChildChannel(
         channel: any Channel,
         schemeIsHTTPS: Bool,

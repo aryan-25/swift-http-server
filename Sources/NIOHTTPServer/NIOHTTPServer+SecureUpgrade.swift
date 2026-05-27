@@ -153,7 +153,7 @@ extension NIOHTTPServer {
         }
     }
 
-    /// Creates a ServerBootstrap and configures it to accept TLS connections with ALPN negotiation.
+    /// Creates a `ServerBootstrap` and configures it to accept TLS connections with ALPN negotiation.
     func setupSecureUpgradeServerChannels(
         bindTargets: [NIOHTTPServerConfiguration.BindTarget],
         supportedHTTPVersions: Set<NIOHTTPServerConfiguration.HTTPVersion>,
@@ -204,7 +204,7 @@ extension NIOHTTPServer {
         return serverChannels
     }
 
-    /// Configures the HTTP/2 server pipeline and wraps the channel in a `NIOAsyncChannel`.
+    /// Adds HTTP/2 channel handlers to a connection child channel.
     private func setupHTTP2ConnectionChildChannel(
         channel: any Channel,
         configuration: NIOHTTPServerConfiguration.HTTP2,
@@ -246,7 +246,9 @@ extension NIOHTTPServer {
         }
     }
 
-    /// Configures an accepted connection's channel pipeline with TLS and ALPN-based protocol negotiation.
+    /// Adds an SSL and ALPN handler to the provided connection child channel.
+    ///
+    /// The ALPN handler is configured to set up either an HTTP/1.1 or HTTP/2 pipeline based on the negotiated result.
     func setupSecureUpgradeConnectionChildChannel(
         channel: any Channel,
         supportedHTTPVersions: Set<NIOHTTPServerConfiguration.HTTPVersion>,
@@ -284,7 +286,11 @@ extension NIOHTTPServer {
         }
     }
 
-    /// Creates an ALPN handler that configures the channel pipeline based on the negotiated protocol.
+    /// Creates an ALPN handler that sets up the appropriate HTTP channel handlers based on the negotiated result.
+    ///
+    /// - If the negotiated protocol is HTTP/1.1, an HTTP/1.1 pipeline is set up.
+    /// - If the negotiated protocol is HTTP/2 and `http2Config` is non-`nil`, an HTTP/2 pipeline is set up.
+    /// - Otherwise, the connection is closed with an error.
     private func makeALPNHandler(
         channel: any Channel,
         http2Config: NIOHTTPServerConfiguration.HTTP2?,
@@ -352,6 +358,10 @@ extension NIOHTTPServer {
         }
     }
 
+    /// Creates a `NIOSSLServerHandler` with the provided TLS configuration.
+    ///
+    /// If `customVerificationCallback` is non-`nil`, it is used to verify client certificates instead of the default
+    /// NIOSSL verification logic.
     func makeSSLServerHandler(
         _ tlsConfiguration: TLSConfiguration,
         _ customVerificationCallback: (@Sendable ([X509.Certificate]) async throws -> CertificateVerificationResult)?
