@@ -96,7 +96,10 @@ struct TestingChannelSecureUpgradeServer {
                 channel: serverTestConnectionChannel,
                 supportedHTTPVersions: self.server.configuration.supportedHTTPVersions,
                 tlsConfiguration: tlsConfiguration,
-                asyncChannelConfiguration: .init(isOutboundHalfClosureEnabled: true)
+                asyncChannelConfiguration: .init(
+                    backPressureStrategy: .init(self.server.configuration.backpressureStrategy),
+                    isOutboundHalfClosureEnabled: true
+                )
             )
         }.get()
 
@@ -114,9 +117,20 @@ struct TestingChannelSecureUpgradeServer {
             // We must forward all client outbound writes to the server and vice-versa.
             group.addTask { try await clientTestingChannel.glueTo(serverTestConnectionChannel) }
 
-            try await body(.init(negotiationResult: try await clientNegotiatedConnectionFuture.get()))
+            let negotiationResult = try await clientNegotiatedConnectionFuture.get()
+            try await body(.init(negotiationResult: negotiationResult))
 
-            try await serverTestConnectionChannel.close()
+            switch negotiationResult {
+            case .http1_1:
+                // `isOutboundHalfClosureEnabled` was set to `true` on the server connection channel; at this point, the
+                // server's connection channel is already closed.
+                ()
+
+            case .http2:
+                // Unlike HTTP/1.1, only the stream channel will have been closed at this point. We have to close the
+                // server connection channel here manually to allow the task group can finish.
+                try await serverTestConnectionChannel.close()
+            }
         }
     }
 }

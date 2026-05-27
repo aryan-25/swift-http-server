@@ -82,7 +82,10 @@ struct TestingChannelHTTP1Server {
         let serverAsyncConnectionChannel = try await self.server.setupHTTP1_1ConnectionChildChannel(
             channel: serverTestConnectionChannel,
             schemeIsHTTPS: false,
-            asyncChannelConfiguration: .init()
+            asyncChannelConfiguration: .init(
+                backPressureStrategy: .init(self.server.configuration.backpressureStrategy),
+                isOutboundHalfClosureEnabled: true
+            )
         ).get()
 
         // Write the connection channel to the server channel to simulate an incoming connection
@@ -99,7 +102,8 @@ struct TestingChannelHTTP1Server {
 
             try await body(clientAsyncChannel)
 
-            try? await serverTestConnectionChannel.close()
+            // `isOutboundHalfClosureEnabled` was set to `true` on the server connection channel; at this point, the
+            // server's connection channel is already closed.
         }
     }
 }

@@ -18,34 +18,31 @@ import NIOEmbedded
 extension NIOAsyncTestingChannel {
     /// Forwards all of our outbound writes to `other` and vice-versa.
     func glueTo(_ other: NIOAsyncTestingChannel) async throws {
-        try await withThrowingDiscardingTaskGroup { group in
+        await withThrowingTaskGroup { group in
             // 1. Forward all `self` writes to `other`
             group.addTask {
                 while !Task.isCancelled {
-                    do {
-                        let ourPart = try await self.waitForOutboundWrite(as: ByteBuffer.self)
-                        try await other.writeInbound(ourPart)
-                    } catch ChannelError.ioOnClosedChannel {
-                        // We only reach here if the channel has closed. `waitForOutboundWrite` uses a continuation
-                        // without `withTaskCancellationHandler`, so this error is the only shutdown signal; returning
-                        // allows the task group and `glueTo` to complete cleanly.
-                        return
-                    }
+                    let ourPart = try await self.waitForOutboundWrite(as: ByteBuffer.self)
+                    try await other.writeInbound(ourPart)
                 }
             }
 
             // 2. Forward all `other` writes to `self`
             group.addTask {
                 while !Task.isCancelled {
-                    do {
-                        let otherPart = try await other.waitForOutboundWrite(as: ByteBuffer.self)
-                        try await self.writeInbound(otherPart)
-                    } catch ChannelError.ioOnClosedChannel {
-                        // Same reasoning as above: the channel has closed, and returning allows the task group and
-                        // `glueTo` to complete cleanly.
-                        return
-                    }
+                    let otherPart = try await other.waitForOutboundWrite(as: ByteBuffer.self)
+                    try await self.writeInbound(otherPart)
                 }
+            }
+
+            do {
+                // waitForOutboundWrite uses a continuation and does not respond to task cancellation. As such, if one
+                // task fails, the other task is indefinitely blocked at `waitForOutboundWrite` until the corresponding
+                // channel closes. Therefore, if any task fails, we close both channels and exit this task group.
+                try await group.next()
+            } catch {
+                try? await self.close()
+                try? await other.close()
             }
         }
     }
