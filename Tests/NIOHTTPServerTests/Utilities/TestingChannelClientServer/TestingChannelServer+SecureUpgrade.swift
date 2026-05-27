@@ -95,7 +95,8 @@ struct TestingChannelSecureUpgradeServer {
             self.server.setupSecureUpgradeConnectionChildChannel(
                 channel: serverTestConnectionChannel,
                 supportedHTTPVersions: self.server.configuration.supportedHTTPVersions,
-                tlsConfiguration: tlsConfiguration
+                tlsConfiguration: tlsConfiguration,
+                asyncChannelConfiguration: .init(isOutboundHalfClosureEnabled: true)
             )
         }.get()
 

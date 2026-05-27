@@ -153,6 +153,7 @@ extension NIOHTTPServer {
         }
     }
 
+    /// Creates a ServerBootstrap and configures it to accept TLS connections with ALPN negotiation.
     func setupSecureUpgradeServerChannels(
         bindTargets: [NIOHTTPServerConfiguration.BindTarget],
         supportedHTTPVersions: Set<NIOHTTPServerConfiguration.HTTPVersion>,
@@ -178,7 +179,11 @@ extension NIOHTTPServer {
                             self.setupSecureUpgradeConnectionChildChannel(
                                 channel: channel,
                                 supportedHTTPVersions: supportedHTTPVersions,
-                                tlsConfiguration: tlsConfiguration
+                                tlsConfiguration: tlsConfiguration,
+                                asyncChannelConfiguration: .init(
+                                    backPressureStrategy: .init(self.configuration.backpressureStrategy),
+                                    isOutboundHalfClosureEnabled: true
+                                )
                             )
                         }
                     serverChannels.append(serverChannel)
@@ -199,27 +204,11 @@ extension NIOHTTPServer {
         return serverChannels
     }
 
-    private func http1ConnectionInitializer(
-        channel: any Channel
-    ) -> EventLoopFuture<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>> {
-        channel.pipeline.configureHTTPServerPipeline().flatMap { _ in
-            channel.eventLoop.makeCompletedFuture {
-                try channel.pipeline.syncOperations.addHandler(HTTP1ToHTTPServerCodec(secure: true))
-
-                return try NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>(
-                    wrappingChannelSynchronously: channel,
-                    configuration: .init(
-                        backPressureStrategy: .init(self.configuration.backpressureStrategy),
-                        isOutboundHalfClosureEnabled: true
-                    )
-                )
-            }
-        }
-    }
-
-    private func http2ConnectionInitializer(
+    /// Configures the HTTP/2 server pipeline and wraps the channel in a `NIOAsyncChannel`.
+    private func setupHTTP2ConnectionChildChannel(
         channel: any Channel,
-        configuration: NIOHTTPServerConfiguration.HTTP2
+        configuration: NIOHTTPServerConfiguration.HTTP2,
+        asyncChannelConfiguration: NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>.Configuration
     ) -> EventLoopFuture<
         (
             any Channel,
@@ -246,10 +235,7 @@ extension NIOHTTPServer {
 
                         return try NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>(
                             wrappingChannelSynchronously: http2StreamChannel,
-                            configuration: .init(
-                                backPressureStrategy: .init(self.configuration.backpressureStrategy),
-                                isOutboundHalfClosureEnabled: true
-                            )
+                            configuration: asyncChannelConfiguration
                         )
                     }
                 }
@@ -260,10 +246,12 @@ extension NIOHTTPServer {
         }
     }
 
+    /// Configures an accepted connection's channel pipeline with TLS and ALPN-based protocol negotiation.
     func setupSecureUpgradeConnectionChildChannel(
         channel: any Channel,
         supportedHTTPVersions: Set<NIOHTTPServerConfiguration.HTTPVersion>,
-        tlsConfiguration: TLSConfiguration
+        tlsConfiguration: TLSConfiguration,
+        asyncChannelConfiguration: NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>.Configuration
     ) -> EventLoopFuture<EventLoopFuture<NegotiatedChannel>> {
         channel.eventLoop.makeCompletedFuture {
             var tlsConfiguration = tlsConfiguration
@@ -281,7 +269,8 @@ extension NIOHTTPServer {
             channel.eventLoop.makeCompletedFuture {
                 let alpnHandler = self.makeALPNHandler(
                     channel: channel,
-                    http2Config: supportedHTTPVersions.http2ConfigIfSupported
+                    http2Config: supportedHTTPVersions.http2ConfigIfSupported,
+                    asyncChannelConfiguration: asyncChannelConfiguration
                 )
 
                 do {
@@ -295,17 +284,27 @@ extension NIOHTTPServer {
         }
     }
 
+    /// Creates an ALPN handler that configures the channel pipeline based on the negotiated protocol.
     private func makeALPNHandler(
         channel: any Channel,
-        http2Config: NIOHTTPServerConfiguration.HTTP2?
+        http2Config: NIOHTTPServerConfiguration.HTTP2?,
+        asyncChannelConfiguration: NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>.Configuration
     ) -> NIOTypedApplicationProtocolNegotiationHandler<NegotiatedChannel> {
         NIOTypedApplicationProtocolNegotiationHandler<NegotiatedChannel> { result in
             switch (result, http2Config) {
             case (.negotiated("http/1.1"), _):
-                return self.http1ConnectionInitializer(channel: channel).map { .http1_1($0) }
+                return self.setupHTTP1_1ConnectionChildChannel(
+                    channel: channel,
+                    schemeIsHTTPS: true,
+                    asyncChannelConfiguration: asyncChannelConfiguration
+                ).map { .http1_1($0) }
 
             case (.negotiated("h2"), .some(let http2Config)):
-                return self.http2ConnectionInitializer(channel: channel, configuration: http2Config).map { .http2($0) }
+                return self.setupHTTP2ConnectionChildChannel(
+                    channel: channel,
+                    configuration: http2Config,
+                    asyncChannelConfiguration: asyncChannelConfiguration
+                ).map { .http2($0) }
 
             case (.negotiated, _), (.fallback, _):
                 // The negotiated result was an unsupported protocol, or ALPN negotiation failed / never took place.
@@ -352,10 +351,7 @@ extension NIOHTTPServer {
             try? await channel.channel.close()
         }
     }
-}
 
-@available(anyAppleOS 26.0, *)
-extension NIOHTTPServer {
     func makeSSLServerHandler(
         _ tlsConfiguration: TLSConfiguration,
         _ customVerificationCallback: (@Sendable ([X509.Certificate]) async throws -> CertificateVerificationResult)?

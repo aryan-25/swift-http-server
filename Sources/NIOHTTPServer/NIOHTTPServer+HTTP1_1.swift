@@ -63,6 +63,7 @@ extension NIOHTTPServer {
         }
     }
 
+    /// Creates a ServerBootstrap and configures it to accept HTTP/1.1 connections.
     func setupHTTP1_1ServerChannels(
         bindTargets: [NIOHTTPServerConfiguration.BindTarget]
     ) async throws -> [NIOAsyncChannel<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, Never>] {
@@ -85,6 +86,7 @@ extension NIOHTTPServer {
                         try await bootstrap.bind(host: host, port: port) { channel in
                             self.setupHTTP1_1ConnectionChildChannel(
                                 channel: channel,
+                                schemeIsHTTPS: false,
                                 asyncChannelConfiguration: .init(
                                     backPressureStrategy: .init(self.configuration.backpressureStrategy),
                                     isOutboundHalfClosureEnabled: true
@@ -109,12 +111,17 @@ extension NIOHTTPServer {
         return serverChannels
     }
 
+    /// Configures the HTTP/1.1 server pipeline and wraps the channel in a `NIOAsyncChannel`.
+    ///
+    /// Set `schemeIsHTTPS` to `true` if the connection uses HTTPS, or `false` for HTTP. `HTTP1ToHTTPServerCodec` uses
+    /// this to set the URI scheme on incoming request head parts.
     func setupHTTP1_1ConnectionChildChannel(
         channel: any Channel,
+        schemeIsHTTPS: Bool,
         asyncChannelConfiguration: NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>.Configuration
     ) -> EventLoopFuture<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>> {
         channel.pipeline.configureHTTPServerPipeline().flatMapThrowing {
-            try channel.pipeline.syncOperations.addHandler(HTTP1ToHTTPServerCodec(secure: false))
+            try channel.pipeline.syncOperations.addHandler(HTTP1ToHTTPServerCodec(secure: schemeIsHTTPS))
             try channel.pipeline.syncOperations.addHandler(HTTPKeepAliveHandler())
 
             return try NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>(
