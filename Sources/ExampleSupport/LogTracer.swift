@@ -12,14 +12,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-import Tracing
+package import Tracing
 
-struct LogTracer: Tracer {
-    typealias Span = NoOpSpan
+package struct LogTracer: Tracer {
+    package typealias Span = NoOpSpan
 
-    init() {}
+    package init() {}
 
-    func startAnySpan<Instant: TracerInstant>(
+    package func startAnySpan<Instant: TracerInstant>(
         _ operationName: String,
         context: @autoclosure () -> ServiceContext,
         ofKind kind: SpanKind,
@@ -32,16 +32,20 @@ struct LogTracer: Tracer {
         return NoOpSpan(context: context())
     }
 
-    func forceFlush() {
+    package func forceFlush() {
         print("Flushing")
     }
 
-    func inject<Carrier, Inject>(_ context: ServiceContext, into carrier: inout Carrier, using injector: Inject)
+    package func inject<Carrier, Inject>(
+        _ context: ServiceContext,
+        into carrier: inout Carrier,
+        using injector: Inject
+    )
     where Inject: Injector, Carrier == Inject.Carrier {
         // no-op
     }
 
-    func extract<Carrier, Extract>(
+    package func extract<Carrier, Extract>(
         _ carrier: Carrier,
         into context: inout ServiceContext,
         using extractor: Extract
@@ -50,47 +54,43 @@ struct LogTracer: Tracer {
         // no-op
     }
 
-    struct NoOpSpan: Tracing.Span {
-        let context: ServiceContext
-        var isRecording: Bool {
+    package struct NoOpSpan: Tracing.Span {
+        package let context: ServiceContext
+        package var isRecording: Bool {
             false
         }
 
-        var operationName: String {
-            get {
-                "noop"
-            }
+        package var operationName: String {
+            get { "noop" }
             nonmutating set {
                 // ignore
             }
         }
 
-        init(context: ServiceContext) {
+        package init(context: ServiceContext) {
             self.context = context
         }
 
-        func setStatus(_ status: SpanStatus) {}
+        package func setStatus(_ status: SpanStatus) {}
 
-        func addLink(_ link: SpanLink) {}
+        package func addLink(_ link: SpanLink) {}
 
-        func addEvent(_ event: SpanEvent) {}
+        package func addEvent(_ event: SpanEvent) {}
 
-        func recordError<Instant: TracerInstant>(
+        package func recordError<Instant: TracerInstant>(
             _ error: any Error,
             attributes: SpanAttributes,
             at instant: @autoclosure () -> Instant
         ) {}
 
-        var attributes: SpanAttributes {
-            get {
-                [:]
-            }
+        package var attributes: SpanAttributes {
+            get { [:] }
             nonmutating set {
                 // ignore
             }
         }
 
-        func end<Instant: TracerInstant>(at instant: @autoclosure () -> Instant) {
+        package func end<Instant: TracerInstant>(at instant: @autoclosure () -> Instant) {
             print("Ending span")
         }
     }

@@ -19,6 +19,7 @@ import NIOHTTP1
 import NIOHTTPTypes
 import NIOHTTPTypesHTTP1
 import NIOPosix
+import NIOSSL
 
 @available(anyAppleOS 26.0, *)
 extension NIOHTTPServer {
@@ -29,21 +30,13 @@ extension NIOHTTPServer {
     ///
     /// - Parameters:
     ///   - serverChannel: The async channel that produces incoming HTTP/1.1 connections.
-    ///   - handler: The request handler.
+    ///   - connectionHandler: The connection handler invoked for each accepted connection.
     ///
     /// - Throws: If an error occurs while iterating the incoming connection stream.
-    func serveInsecureHTTP1_1<Handler: HTTPServerRequestHandler>(
+    func serveInsecureHTTP1_1<Handler: NIOHTTPServerConnectionHandler>(
         serverChannel: NIOAsyncChannel<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, Never>,
-        handler: Handler
-    ) async throws
-    where
-        Handler.RequestContext: ~Copyable,
-        Handler.RequestContext == RequestContext,
-        Handler.Reader == Reader,
-        Handler.Reader: ~Copyable,
-        Handler.ResponseSender == ResponseSender,
-        Handler.ResponseSender: ~Copyable
-    {
+        connectionHandler: Handler
+    ) async throws {
         try await serverChannel.executeThenClose { inbound in
             // We don't use a `withThrowingDiscardingTaskGroup` here because an error thrown from the body or a child
             // task would immediately propagate upwards, cancelling all child tasks and bringing down the entire server.
@@ -51,9 +44,12 @@ extension NIOHTTPServer {
             // `inbound`) must be caught and handled directly.
             let inboundConnectionIterationError = await withDiscardingTaskGroup { group -> (any Error)? in
                 do {
-                    for try await http1Channel in inbound {
+                    for try await requestChannel in inbound {
                         group.addTask {
-                            await self.handleHTTP1RequestChannel(channel: http1Channel, handler: handler)
+                            await self.dispatchPlaintextHTTP1_1Connection(
+                                requestChannel: requestChannel,
+                                connectionHandler: connectionHandler
+                            )
                         }
                     }
 
@@ -67,6 +63,45 @@ extension NIOHTTPServer {
                 // The error occurred while iterating the inbound connection stream
                 throw inboundConnectionIterationError
             }
+        }
+    }
+
+    /// Builds the per-connection ``Connection`` and ``ConnectionContext`` for a
+    /// plaintext HTTP/1.1 child channel and dispatches to the connection
+    /// handler. Errors from the connection handler are logged.
+    ///
+    /// The dispatcher owns the channel's `executeThenClose` so the
+    /// `NIOAsyncWriter` is finished cleanly whether or not the connection
+    /// handler called ``Connection/handleRequests(handler:)``.
+    private func dispatchPlaintextHTTP1_1Connection<Handler: NIOHTTPServerConnectionHandler>(
+        requestChannel: sending NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>,
+        connectionHandler: Handler
+    ) async {
+        do {
+            try await requestChannel.executeThenClose { inbound, outbound in
+                let context = NIOHTTPServer.makeHTTP1ConnectionContext(
+                    requestChannel: requestChannel,
+                    peerCertificateChainFuture: nil
+                )
+                let connection = Connection(
+                    server: self,
+                    context: context,
+                    httpProtocol: .http1_1(inbound: inbound, outbound: outbound)
+                )
+                do {
+                    try await connectionHandler.handleConnection(connection: connection, context: context)
+                } catch {
+                    self.logger.debug(
+                        "Error thrown by connection handler",
+                        metadata: ["error": "\(error)"]
+                    )
+                }
+            }
+        } catch {
+            self.logger.debug(
+                "Error tearing down HTTP/1.1 channel",
+                metadata: ["error": "\(error)"]
+            )
         }
     }
 
@@ -128,6 +163,7 @@ extension NIOHTTPServer {
         return serverChannels
     }
 
+    /// Configures the HTTP/1.1 server pipeline and the keep-alive handler.
     func setupHTTP1_1Connection(
         channel: any Channel,
         asyncChannelConfiguration: NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>.Configuration,
@@ -136,7 +172,6 @@ extension NIOHTTPServer {
         channel.pipeline.configureHTTPServerPipeline().flatMapThrowing {
             try channel.pipeline.syncOperations.addHandler(HTTP1ToHTTPServerCodec(secure: isSecure))
             try channel.pipeline.syncOperations.addHandler(HTTPKeepAliveHandler())
-
             try channel
                 .pipeline
                 .syncOperations
@@ -149,48 +184,66 @@ extension NIOHTTPServer {
         }
     }
 
-    /// Handles an HTTP/1.1 connection channel, which may carry multiple serial requests on the
-    /// same connection (keep-alive).
-    func handleHTTP1RequestChannel<Handler: HTTPServerRequestHandler>(
-        channel: NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>,
-        handler: Handler
+    /// Builds a ``ConnectionContext`` for an HTTP/1.1 request channel.
+    static func makeHTTP1ConnectionContext(
+        requestChannel: NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>,
+        peerCertificateChainFuture: EventLoopFuture<NIOSSL.ValidatedCertificateChain?>?
+    ) -> ConnectionContext {
+        ConnectionContext(
+            httpVersion: .http1_1,
+            remoteAddress: try? NIOHTTPServer.SocketAddress(requestChannel.channel.remoteAddress),
+            localAddress: try? NIOHTTPServer.SocketAddress(requestChannel.channel.localAddress),
+            peerCertificateChainFuture: peerCertificateChainFuture
+        )
+    }
+
+    /// Drives the request loop on an HTTP/1.1 connection that may carry
+    /// multiple serial requests (keep-alive). Invoked from
+    /// ``NIOHTTPServer/Connection/handleRequests(handler:)`` for the
+    /// HTTP/1.1 case.
+    ///
+    /// The caller (the dispatcher) owns the channel's `executeThenClose`,
+    /// so this method only iterates inbound requests and writes responses;
+    /// it never closes the channel itself. The loop terminates when the
+    /// peer closes the connection, the task is cancelled, or an error
+    /// occurs.
+    func handleHTTP1RequestLoop<Handler: HTTPServerRequestHandler>(
+        inbound: NIOAsyncChannelInboundStream<HTTPRequestPart>,
+        outbound: NIOAsyncChannelOutboundWriter<HTTPResponsePart>,
+        handler: Handler,
+        context: ConnectionContext
     ) async
     where
-        Handler.RequestContext: ~Copyable,
         Handler.RequestContext == RequestContext,
         Handler.Reader == Reader,
-        Handler.Reader: ~Copyable,
-        Handler.ResponseSender == ResponseSender,
-        Handler.ResponseSender: ~Copyable
+        Handler.ResponseSender == ResponseSender
     {
         do {
-            try await channel.executeThenClose { inbound, outbound in
-                var iterator = inbound.makeAsyncIterator()
+            var iterator = inbound.makeAsyncIterator()
 
-                requestLoop: while !Task.isCancelled {
-                    guard let httpRequest = try await self.nextRequestHead(from: &iterator) else {
-                        break requestLoop
-                    }
-
-                    guard
-                        let recoveredIterator = try await self.invokeHandler(
-                            request: httpRequest,
-                            iterator: iterator,
-                            outbound: outbound,
-                            handler: handler
-                        )
-                    else {
-                        // Handler did not fully consume the request; cannot continue on this
-                        // connection.
-                        break requestLoop
-                    }
-
-                    iterator = recoveredIterator
+            requestLoop: while !Task.isCancelled {
+                guard let httpRequest = try await self.nextRequestHead(from: &iterator) else {
+                    break requestLoop
                 }
+
+                guard
+                    let recoveredIterator = try await self.invokeHandler(
+                        request: httpRequest,
+                        iterator: iterator,
+                        outbound: outbound,
+                        handler: handler,
+                        context: context
+                    )
+                else {
+                    // Handler did not fully consume the request; cannot continue on this
+                    // connection.
+                    break requestLoop
+                }
+
+                iterator = recoveredIterator
             }
         } catch {
             self.logger.debug("Error thrown while handling HTTP/1.1 connection", metadata: ["error": "\(error)"])
-            try? await channel.channel.close()
         }
     }
 }

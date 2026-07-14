@@ -133,7 +133,7 @@ extension NIOHTTPServer {
 
 @available(anyAppleOS 26.0, *)
 extension NIOHTTPServer.SocketAddress {
-    fileprivate init(_ address: NIOCore.SocketAddress?) throws(ListeningAddressError) {
+    init(_ address: NIOCore.SocketAddress?) throws(ListeningAddressError) {
         guard let address, let port = address.port else {
             throw ListeningAddressError.addressOrPortNotAvailable
         }

@@ -88,7 +88,7 @@ struct TestingChannelHTTP1Server {
             isSecure: false
         ).get()
 
-        // Write the connection channel to the server channel to simulate an incoming connection
+        // Write the child connection to the server channel to simulate an incoming connection
         try await self.serverTestChannel.writeInbound(serverAsyncConnectionChannel)
 
         let clientTestingChannel = try await NIOAsyncTestingChannel.createActiveChannel()

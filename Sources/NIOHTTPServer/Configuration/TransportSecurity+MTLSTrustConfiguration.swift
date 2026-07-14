@@ -84,8 +84,7 @@ extension NIOHTTPServerConfiguration.TransportSecurity {
         ///     ``CertificateVerificationResult/certificateVerified(_:)`` from the callback if verification succeeds,
         ///     optionally including the validated certificate chain you derived. Returning the validated certificate
         ///     chain allows ``NIOHTTPServer`` to provide access to it in the request handler through
-        ///     ``NIOHTTPServer/ConnectionContext/peerCertificateChain``, accessed via the task-local
-        ///     ``NIOHTTPServer/connectionContext`` property. Otherwise, return
+        ///     ``NIOHTTPServer/RequestContext/peerCertificateChain``. Otherwise, return
         ///     ``CertificateVerificationResult/failed(_:)`` if verification fails.
         ///   - certificateVerification: The client certificate verification behavior. Defaults to
         ///     ``CertificateVerificationMode/noHostnameVerification``.

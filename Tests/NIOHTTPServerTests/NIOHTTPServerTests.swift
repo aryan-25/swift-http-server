@@ -143,7 +143,7 @@ struct NIOHTTPServerTests {
                 serverHandler: HTTPServerClosureRequestHandler { request, requestContext, reader, responseWriter in
                     #expect(request == Self.makeRequest(method: .post, for: httpVersion))
 
-                    let peerChain = try #require(try await NIOHTTPServer.connectionContext.peerCertificateChain)
+                    let peerChain = try #require(try await requestContext.peerCertificateChain)
                     #expect(Array(peerChain) == [clientChain.leaf])
 
                     var collected = UniqueArray<UInt8>()

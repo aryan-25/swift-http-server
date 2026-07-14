@@ -63,8 +63,6 @@ import X509
 /// ```
 @available(anyAppleOS 26.0, *)
 public struct NIOHTTPServer: HTTPServer {
-    public struct RequestContext: HTTPServerCapability.RequestContext, Sendable {}
-
     let logger: Logger
     let configuration: NIOHTTPServerConfiguration
 
@@ -76,11 +74,6 @@ public struct NIOHTTPServer: HTTPServer {
     let eventLoopGroup: MultiThreadedEventLoopGroup
 
     var listeningAddressState: NIOLockedValueBox<State>
-
-    /// Task-local storage for connection-specific information accessible from request handlers.
-    ///
-    /// - SeeAlso: ``ConnectionContext``.
-    @TaskLocal public static var connectionContext = ConnectionContext()
 
     /// Create a new ``HTTPServer`` implemented over `SwiftNIO`.
     /// - Parameters:
@@ -132,13 +125,40 @@ public struct NIOHTTPServer: HTTPServer {
     /// ```
     public func serve<Handler: HTTPServerRequestHandler>(handler: Handler) async throws
     where
-        Handler.RequestContext: ~Copyable,
         Handler.RequestContext == RequestContext,
         Handler.Reader == Reader,
-        Handler.Reader: ~Copyable,
-        Handler.ResponseSender == ResponseSender,
-        Handler.ResponseSender: ~Copyable
+        Handler.ResponseSender == ResponseSender
     {
+        try await self.serve(
+            connectionHandler: NIOHTTPServerDefaultConnectionHandler(handler: handler)
+        )
+    }
+
+    /// Starts an HTTP server with the specified connection handler.
+    ///
+    /// This method is the connection-aware counterpart to ``serve(handler:)``. For
+    /// every accepted TCP/TLS connection (after ALPN negotiation on the secure
+    /// path), the server materialises a ``Connection`` and a ``ConnectionContext``
+    /// and invokes ``NIOHTTPServerConnectionHandler/handleConnection(connection:context:)``.
+    ///
+    /// User code that only needs request-level processing should prefer
+    /// ``serve(handler:)``. Use this entry point when the user code needs to run
+    /// connection-scoped setup (per-connection logger, metric dimensions,
+    /// counters), share state between requests on the same connection, or
+    /// observe state after the connection's request loop returns.
+    ///
+    /// ## All-or-nothing listening
+    ///
+    /// The server treats its set of listening addresses as a single unit. If an
+    /// unrecoverable error occurs on any of the listening channels, the server
+    /// stops listening on **all** remaining addresses and this method returns.
+    ///
+    /// - Parameter connectionHandler: An ``NIOHTTPServerConnectionHandler``
+    ///   implementation that drives the request loop on each accepted
+    ///   connection.
+    public func serve<Handler: NIOHTTPServerConnectionHandler>(
+        connectionHandler: Handler
+    ) async throws {
         // Ensure the listening address promise is always completed on the way out, regardless of whether
         // binding succeeded, the serve loop returned normally, or an error propagated.
         defer { self.finishListeningAddressPromise() }
@@ -147,7 +167,7 @@ public struct NIOHTTPServer: HTTPServer {
 
         return try await withTaskCancellationHandler {
             try await withGracefulShutdownHandler {
-                try await self._serve(serverChannels: serverChannels, handler: handler)
+                try await self._serve(serverChannels: serverChannels, connectionHandler: connectionHandler)
             } onGracefulShutdown: {
                 self.beginGracefulShutdown(serverChannels: serverChannels)
             }
@@ -155,6 +175,32 @@ public struct NIOHTTPServer: HTTPServer {
             // Forcefully close down the server channels
             self.close(serverChannels: serverChannels)
         }
+    }
+
+    /// Convenience overload accepting a closure instead of an
+    /// ``NIOHTTPServerConnectionHandler`` conformance.
+    ///
+    /// ```swift
+    /// try await server.serve { connection, context in
+    ///     var connectionLogger = rootLogger
+    ///     connectionLogger[metadataKey: "peer"] =
+    ///         .string(context.remoteAddress?.host ?? "unknown")
+    ///     connectionLogger.info("connection accepted")
+    ///     defer { connectionLogger.info("connection closed") }
+    ///
+    ///     try await connection.handleRequests(handler: MyHandler(logger: connectionLogger))
+    /// }
+    /// ```
+    public func serve(
+        connectionHandler:
+            @Sendable @escaping (
+                _ connection: consuming sending Connection,
+                _ context: ConnectionContext
+            ) async throws -> Void
+    ) async throws {
+        try await self.serve(
+            connectionHandler: NIOHTTPServerClosureConnectionHandler(body: connectionHandler)
+        )
     }
 
     /// Creates and returns server channels based on the configured transport security.
@@ -180,27 +226,25 @@ public struct NIOHTTPServer: HTTPServer {
         }
     }
 
-    private func _serve<Handler: HTTPServerRequestHandler>(
+    private func _serve<Handler: NIOHTTPServerConnectionHandler>(
         serverChannels: [ServerChannel],
-        handler: Handler
-    ) async throws
-    where
-        Handler.RequestContext: ~Copyable,
-        Handler.RequestContext == RequestContext,
-        Handler.Reader == Reader,
-        Handler.Reader: ~Copyable,
-        Handler.ResponseSender == ResponseSender,
-        Handler.ResponseSender: ~Copyable
-    {
+        connectionHandler: Handler
+    ) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             for serverChannel in serverChannels {
                 group.addTask {
                     switch serverChannel {
                     case .plaintextHTTP1_1(let http1Channel, _):
-                        try await self.serveInsecureHTTP1_1(serverChannel: http1Channel, handler: handler)
+                        try await self.serveInsecureHTTP1_1(
+                            serverChannel: http1Channel,
+                            connectionHandler: connectionHandler
+                        )
 
                     case .secureUpgrade(let secureUpgradeChannel, _):
-                        try await self.serveSecureUpgrade(serverChannel: secureUpgradeChannel, handler: handler)
+                        try await self.serveSecureUpgrade(
+                            serverChannel: secureUpgradeChannel,
+                            connectionHandler: connectionHandler
+                        )
                     }
                 }
             }
@@ -245,15 +289,13 @@ public struct NIOHTTPServer: HTTPServer {
         request: HTTPRequest,
         iterator: consuming sending NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator,
         outbound: NIOAsyncChannelOutboundWriter<HTTPResponsePart>,
-        handler: Handler
+        handler: Handler,
+        context: ConnectionContext
     ) async throws -> NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator?
     where
-        Handler.RequestContext: ~Copyable,
         Handler.RequestContext == RequestContext,
         Handler.Reader == Reader,
-        Handler.Reader: ~Copyable,
-        Handler.ResponseSender == ResponseSender,
-        Handler.ResponseSender: ~Copyable
+        Handler.ResponseSender == ResponseSender
     {
         let readerState = Reader.ReaderState(iterator: iterator)
         let writerState = ResponseSender.WriterState()
@@ -261,7 +303,7 @@ public struct NIOHTTPServer: HTTPServer {
         do {
             try await handler.handle(
                 request: request,
-                requestContext: RequestContext(),
+                requestContext: RequestContext(connectionContext: context),
                 reader: Reader(
                     readerState: readerState
                 ),

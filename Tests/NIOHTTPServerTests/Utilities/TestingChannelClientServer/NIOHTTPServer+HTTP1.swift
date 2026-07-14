@@ -27,12 +27,9 @@ extension NIOHTTPServer {
         handler: Handler
     ) async throws
     where
-        Handler.RequestContext: ~Copyable,
         Handler.RequestContext == RequestContext,
         Handler.Reader == Reader,
-        Handler.Reader: ~Copyable,
-        Handler.ResponseSender == ResponseSender,
-        Handler.ResponseSender: ~Copyable
+        Handler.ResponseSender == ResponseSender
     {
         // The server requires a NIOAsyncChannel, so we create one from the test channel
         let serverTestAsyncChannel = try await testChannel.eventLoop.submit {
@@ -48,6 +45,9 @@ extension NIOHTTPServer {
         try self.addressesBound([.init(ipAddress: "127.0.0.1", port: 8000)])
         _ = try await self.listeningAddresses
 
-        try await self.serveInsecureHTTP1_1(serverChannel: serverTestAsyncChannel, handler: handler)
+        try await self.serveInsecureHTTP1_1(
+            serverChannel: serverTestAsyncChannel,
+            connectionHandler: NIOHTTPServerDefaultConnectionHandler(handler: handler)
+        )
     }
 }
