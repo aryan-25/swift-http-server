@@ -17,6 +17,9 @@ import Foundation
 import SwiftASN1
 import X509
 
+@testable import NIOHTTPServer
+
+@available(anyAppleOS 26.0, *)
 struct ChainPrivateKeyPair {
     let leaf: Certificate
     let ca: Certificate
@@ -33,20 +36,31 @@ struct ChainPrivateKeyPair {
         }
     }
 
-    func writeToDisk() throws -> (leafPath: String, caPath: String, keyPath: String) {
+    func writeToDisk(
+        encoding: NIOHTTPServerConfiguration.TransportSecurity.Encoding = .pem
+    ) throws -> (leafPath: String, caPath: String, keyPath: String) {
         let uuid = UUID().uuidString
-        let leafPath = FileManager.default.temporaryDirectory.appendingPathComponent("leaf-\(uuid).pem")
-        let caPath = FileManager.default.temporaryDirectory.appendingPathComponent("ca-\(uuid).pem")
-        let keyPath = FileManager.default.temporaryDirectory.appendingPathComponent("key-\(uuid).pem")
+        let leafPath = FileManager.default.temporaryDirectory.appendingPathComponent("leaf-\(uuid)")
+        let caPath = FileManager.default.temporaryDirectory.appendingPathComponent("ca-\(uuid)")
+        let keyPath = FileManager.default.temporaryDirectory.appendingPathComponent("key-\(uuid)")
 
-        try self.leaf.serializeAsPEM().pemString.data(using: .utf8)!.write(to: leafPath)
-        try self.ca.serializeAsPEM().pemString.data(using: .utf8)!.write(to: caPath)
-        try self.privateKey.serializeAsPEM().pemString.data(using: .utf8)!.write(to: keyPath)
+        switch encoding {
+        case .pem:
+            try Data(self.leaf.serializeAsPEM().pemString.utf8).write(to: leafPath)
+            try Data(self.ca.serializeAsPEM().pemString.utf8).write(to: caPath)
+            try Data(self.privateKey.serializeAsPEM().pemString.utf8).write(to: keyPath)
+
+        case .der:
+            try Data(self.leaf.serializeAsPEM().derBytes).write(to: leafPath)
+            try Data(self.ca.serializeAsPEM().derBytes).write(to: caPath)
+            try Data(self.privateKey.serializeAsPEM().derBytes).write(to: keyPath)
+        }
 
         return (leafPath.path, caPath.path, keyPath.path)
     }
 }
 
+@available(anyAppleOS 26.0, *)
 struct TestCA {
     static func makeSelfSignedChain(leafExtensions: Certificate.Extensions = .init()) throws -> ChainPrivateKeyPair {
         let caKey = P384.Signing.PrivateKey()

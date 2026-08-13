@@ -205,23 +205,18 @@ public struct NIOHTTPServer: HTTPServer {
 
     /// Creates and returns server channels based on the configured transport security.
     func makeServerChannels() async throws -> [ServerChannel] {
-        // If transport security is `plaintext`, we can only create an HTTP/1.1 channel.
-        if case .plaintext = self.configuration.transportSecurity.backing {
-            let http1Channels = try await self.setupHTTP1_1ServerChannels(bindTargets: self.configuration.bindTargets)
-            try self.addressesBound(http1Channels.map { (channel, _) in channel.channel.localAddress })
-            return http1Channels.map { (channel, quiescingHelper) in
-                .plaintextHTTP1_1(channel: channel, quiescingHelper: quiescingHelper)
-            }
-        }
-
         var serverChannels = [ServerChannel]()
         var secureUpgradeBindTargets = self.configuration.bindTargets
 
         #if HTTP3
-        if let http3Config = self.configuration.supportedHTTPVersions.http3ConfigIfSupported {
+        if let http3Configuration = self.configuration.supportedHTTPVersions.http3ConfigIfSupported,
+            let authenticationConfiguration = self.configuration.quicAuthenticationConfiguration
+        {
             let http3Channels = try await self.setupHTTP3ServerChannels(
                 bindTargets: self.configuration.bindTargets,
-                http3Configuration: http3Config
+                http3Configuration: http3Configuration,
+                authenticationConfiguration: authenticationConfiguration,
+                authenticator: self.configuration.quicAuthenticator
             )
             serverChannels.append(
                 contentsOf: http3Channels.map { (quicChannel, mux) in
@@ -229,7 +224,7 @@ public struct NIOHTTPServer: HTTPServer {
                 }
             )
 
-            guard self.configuration.supportedHTTPVersions.count > 1 else {
+            if self.configuration.sslContext == nil {
                 // `supportedHTTPVersions == [.http3]` here. We therefore just return HTTP/3 channel(s).
                 try self.addressesBound(http3Channels.map { (channel, _) in channel.localAddress })
                 return serverChannels
@@ -242,13 +237,17 @@ public struct NIOHTTPServer: HTTPServer {
         }
         #endif  // HTTP3
 
+        guard let sslContext = self.configuration.sslContext else {
+            // Set up plaintext HTTP/1.1 channel(s).
+            let http1Channels = try await self.setupHTTP1_1ServerChannels(bindTargets: secureUpgradeBindTargets)
+            try self.addressesBound(http1Channels.map { (channel, _) in channel.channel.localAddress })
+            return http1Channels.map { .plaintextHTTP1_1(channel: $0, quiescingHelper: $1) }
+        }
+
         let secureUpgradeChannels = try await self.setupSecureUpgradeServerChannels(
             bindTargets: secureUpgradeBindTargets,
-            supportedHTTPVersions: self.configuration.supportedHTTPVersions,
-            sslContext: .makeServerContext(
-                transportSecurity: self.configuration.transportSecurity,
-                alpnIdentifiers: self.configuration.supportedHTTPVersions.alpnIdentifiers
-            )
+            http2Configuration: self.configuration.supportedHTTPVersions.http2ConfigIfSupported,
+            sslContext: sslContext
         )
         try self.addressesBound(secureUpgradeChannels.map { (channel, _) in channel.channel.localAddress })
 

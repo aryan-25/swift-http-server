@@ -16,6 +16,10 @@ import NIOCore
 import NIOSSL
 public import X509
 
+#if HTTP3
+import NIOQUIC
+#endif
+
 /// Configuration settings for ``NIOHTTPServer``.
 ///
 /// This structure contains all the necessary configuration options for setting up
@@ -285,21 +289,65 @@ public struct NIOHTTPServerConfiguration: Sendable {
     }
 
     /// Network binding configuration specifying all addresses where the server should listen.
-    public var bindTargets: [BindTarget]
+    ///
+    /// - Precondition: Must not be empty.
+    public var bindTargets: [BindTarget] {
+        didSet {
+            if self.bindTargets.isEmpty {
+                preconditionFailure(NIOHTTPServerConfigurationError.noBindTargetsSpecified.description)
+            }
+        }
+    }
 
     /// TLS configuration for the server.
-    public var transportSecurity: TransportSecurity
+    ///
+    /// - Precondition: Must be compatible with ``supportedHTTPVersions``:
+    ///   - `transportSecurity == .mTLS` is not supported when `supportedHTTPVersions` contains `.http3`.
+    ///   - Raw Public Key credentials are only supported when `supportedHTTPVersions == [.http3]`.
+    ///   - When `supportedHTTPVersions` contains `.http2` and `.http3`, TLS credentials must be provided as PEM files
+    ///     on disk. Other credential sources are not supported.
+    ///   - `transportSecurity` can only be set to `.plaintext` when `supportedHTTPVersions == [.http1_1]`.
+    public var transportSecurity: TransportSecurity {
+        didSet {
+            do {
+                try self.validateTransportConfiguration()
+            } catch {
+                preconditionFailure("\(error)")
+            }
+        }
+    }
 
     /// The HTTP protocol versions the server advertises and accepts connections for.
-    public var supportedHTTPVersions: Set<HTTPVersion>
+    ///
+    /// - Precondition: Must not be empty, and must be compatible with ``transportSecurity``:
+    ///   - `transportSecurity == .mTLS` is not supported when `supportedHTTPVersions` contains `.http3`.
+    ///   - Raw Public Key credentials are only supported when `supportedHTTPVersions == [.http3]`.
+    ///   - When `supportedHTTPVersions` contains `.http2` and `.http3`, TLS credentials must be provided as PEM files
+    ///     on disk. Other credential sources are not supported.
+    ///   - `transportSecurity` can only be set to `.plaintext` when `supportedHTTPVersions == [.http1_1]`.
+    public var supportedHTTPVersions: Set<HTTPVersion> {
+        didSet {
+            if self.supportedHTTPVersions.isEmpty {
+                preconditionFailure(NIOHTTPServerConfigurationError.noSupportedHTTPVersionsSpecified.description)
+            }
+
+            do {
+                try self.validateTransportConfiguration()
+            } catch {
+                preconditionFailure("\(error)")
+            }
+        }
+    }
 
     /// Backpressure strategy to use in the server.
     public var backpressureStrategy: BackPressureStrategy
 
     /// The maximum number of concurrent connections the server will accept.
     ///
-    /// When this limit is reached, the server stops accepting new connections
-    /// until existing ones close. `nil` means unlimited (the default).
+    /// When this limit is reached, the server stops accepting new connections until existing ones close. `nil` means
+    /// unlimited (the default).
+    ///
+    /// - Note: Connection limits are not currently supported over HTTP/3.
     ///
     /// - Precondition: Must be greater than 0 if non-`nil`.
     public var maxConnections: Int? {
@@ -312,6 +360,24 @@ public struct NIOHTTPServerConfiguration: Sendable {
 
     /// Configuration for connection timeouts.
     public var connectionTimeouts: ConnectionTimeouts
+
+    /// The `NIOSSLContext` used by the secure upgrade channel(s), derived when the configuration is validated.
+    ///
+    /// `nil` when the configuration doesn't call for a secure upgrade channel, i.e. plaintext HTTP/1.1 or HTTP/3 only.
+    var sslContext: NIOSSLContext?
+
+    #if HTTP3
+    /// The QUIC authentication configuration used by the HTTP/3 channel(s).
+    ///
+    /// `nil` when HTTP/3 is not among ``supportedHTTPVersions``.
+    var quicAuthenticationConfiguration: NIOQUIC.AuthenticationConfiguration?
+
+    /// The QUIC authenticator used by the HTTP/3 channel(s), derived when the configuration is validated.
+    ///
+    /// `nil` when HTTP/3 is not among ``supportedHTTPVersions``, and also when the TLS credentials are raw public keys;
+    /// NIOQUIC reads those directly from ``quicAuthenticationConfiguration``.
+    var quicAuthenticator: NIOQUIC.Authenticator?
+    #endif
 
     /// Create a new configuration with multiple bind targets.
     ///
@@ -332,14 +398,6 @@ public struct NIOHTTPServerConfiguration: Sendable {
             throw NIOHTTPServerConfigurationError.noBindTargetsSpecified
         }
 
-        // If `transportSecurity`` is set to `.plaintext`, the server can only support HTTP/1.1.
-        // To support HTTP/2, `transportSecurity` must be set to `.tls` or `.mTLS`.
-        if case .plaintext = transportSecurity.backing {
-            guard supportedHTTPVersions == [.http1_1] else {
-                throw NIOHTTPServerConfigurationError.incompatibleTransportSecurity
-            }
-        }
-
         if supportedHTTPVersions.isEmpty {
             throw NIOHTTPServerConfigurationError.noSupportedHTTPVersionsSpecified
         }
@@ -350,6 +408,9 @@ public struct NIOHTTPServerConfiguration: Sendable {
         self.backpressureStrategy = .defaults
         self.maxConnections = nil
         self.connectionTimeouts = .defaults
+
+        // Validate the compatibility of `supportedHTTPVersions` and `transportSecurity`.
+        try self.validateTransportConfiguration()
     }
 
     /// Create a new configuration with a single bind target.
@@ -507,16 +568,30 @@ extension NIOHTTPServerConfiguration {
         /// The HTTP/2 protocol version.
         ///
         /// - Parameter config: The configuration to use for HTTP/2.
-        public static func http2(config: HTTP2) -> Self {
+        public static func http2(config: HTTP2 = .defaults) -> Self {
             Self(version: .http2(config: config))
+        }
+
+        /// The HTTP/2 protocol version with default configuration values.
+        ///
+        /// - Note: Use ``http2(config:)`` to specify custom configuration values.
+        public static var http2: Self {
+            .http2(config: .defaults)
         }
 
         #if HTTP3
         /// The HTTP/3 protocol version.
         ///
         /// - Parameter config: The configuration to use for HTTP/3.
-        public static func http3(config: HTTP3) -> Self {
+        public static func http3(config: HTTP3 = .defaults) -> Self {
             Self(version: .http3(config: config))
+        }
+
+        /// The HTTP/3 protocol version with default configuration values.
+        ///
+        /// - Note: Use ``http3(config:)`` to specify custom configuration values.
+        public static var http3: Self {
+            .http3(config: .defaults)
         }
         #endif
 
