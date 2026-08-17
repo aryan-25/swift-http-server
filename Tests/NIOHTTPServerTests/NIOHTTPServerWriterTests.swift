@@ -81,6 +81,76 @@ struct NIOHTTPServerWriterTests {
         let trailer = try #require(await responseIterator.next())
         #expect(trailer == .end(self.trailerSampleTwo))
     }
+
+    #if HTTP3 && UnstableHTTPDatagrams
+    @Test("takeDatagramWriter vends no datagram writer when not available")
+    @available(anyAppleOS 26.0, *)
+    func takeDatagramWriterVendsNilWhenNotAvailable() async throws {
+        let (outboundWriter, sink) = NIOAsyncChannelOutboundWriter<HTTPResponsePart>.makeTestingWriter()
+        let sender = NIOHTTPServer.ResponseSender(
+            writer: outboundWriter,
+            writerState: .init(),
+            datagramWriter: nil
+        )
+
+        var responseBodyWriter = try await sender.send(.init(status: .ok))
+        let datagramWriter = responseBodyWriter.takeDatagramWriter()
+
+        if case .some = datagramWriter {
+            Issue.record("Unexpectedly received a datagram writer.")
+        }
+
+        // The response body writer should still be usable.
+        var testBuffer = UniqueArray<UInt8>(repeating: 5, count: 10)
+        try await responseBodyWriter.finish(buffer: &testBuffer)
+
+        var responseIterator = sink.makeAsyncIterator()
+        let head = try #require(await responseIterator.next())
+        let body = try #require(await responseIterator.next())
+        let end = try #require(await responseIterator.next())
+
+        #expect(head == .head(.init(status: .ok)))
+        #expect(body == .body(.init(repeating: 5, count: 10)))
+        #expect(end == .end(nil))
+    }
+
+    @Test("takeDatagramWriter vends a response body and datagram writer")
+    @available(anyAppleOS 26.0, *)
+    func takeDatagramWriterVendsResponseAndDatagramWriter() async throws {
+        let (outboundWriter, sink) = NIOAsyncChannelOutboundWriter<HTTPResponsePart>.makeTestingWriter()
+        let sender = NIOHTTPServer.ResponseSender(
+            writer: outboundWriter,
+            writerState: .init(),
+            datagramWriter: NIOHTTPServer.DatagramWriter()
+        )
+
+        var responseBodyWriter = try await sender.send(.init(status: .ok))
+        let datagramWriter = responseBodyWriter.takeDatagramWriter()
+
+        var testBuffer = UniqueArray<UInt8>(repeating: 5, count: 10)
+        try await responseBodyWriter.finish(buffer: &testBuffer)
+
+        guard var datagramWriter = datagramWriter else {
+            Issue.record("Expected a datagram writer but received `nil`.")
+            return
+        }
+
+        // TODO: The underlying unreliable datagrams transport is not yet implemented.
+        await #expect(throws: DatagramsError.notImplemented) {
+            var emptyBuffer = UniqueArray<UInt8>()
+            try await datagramWriter.write(buffer: &emptyBuffer)
+        }
+
+        var responseIterator = sink.makeAsyncIterator()
+        let head = try #require(await responseIterator.next())
+        let body = try #require(await responseIterator.next())
+        let end = try #require(await responseIterator.next())
+
+        #expect(head == .head(.init(status: .ok)))
+        #expect(body == .body(.init(repeating: 5, count: 10)))
+        #expect(end == .end(nil))
+    }
+    #endif  // HTTP3 && UnstableHTTPDatagrams
 }
 
 extension HTTPField.Name {

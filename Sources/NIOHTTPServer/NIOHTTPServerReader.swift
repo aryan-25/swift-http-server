@@ -69,13 +69,30 @@ extension NIOHTTPServer {
         /// (while keeping its capacity) at the start of every read.
         private var buffer: UniqueArray<UInt8>
 
-        /// Initializes a new request body reader, taking the iterator from the
-        /// shared `ReaderState`.
+        /// Initializes a new request body reader, taking the iterator from the shared `ReaderState`.
         init(readerState: ReaderState) {
             self.state = readerState
             self.iterator = readerState.takeIterator()
             self.buffer = UniqueArray<UInt8>()
         }
+
+        #if HTTP3 && UnstableHTTPDatagrams
+        /// The unreliable datagram reader, present when the underlying transport is capable of reading/writing
+        /// unreliable datagrams.
+        private var datagramReader: Disconnected<NIOHTTPServer.DatagramReader?>?
+
+        /// Initializes a new request body reader that can also vend an unreliable datagram reader if the underlying
+        /// transport supports unreliable datagrams.
+        init(
+            readerState: ReaderState,
+            datagramReader: consuming sending NIOHTTPServer.DatagramReader? = nil
+        ) {
+            self.state = readerState
+            self.iterator = readerState.takeIterator()
+            self.buffer = UniqueArray<UInt8>()
+            self.datagramReader = Disconnected(value: datagramReader)
+        }
+        #endif
 
         public mutating func read<Return: ~Copyable, Failure: Error>(
             body: (inout Buffer, consuming HTTPFields??) async throws(Failure) -> Return
@@ -121,3 +138,15 @@ extension NIOHTTPServer {
 
 @available(*, unavailable)
 extension NIOHTTPServer.Reader: Sendable {}
+
+#if HTTP3 && UnstableHTTPDatagrams
+@available(anyAppleOS 26.0, *)
+extension NIOHTTPServer.Reader {
+    /// Returns the unreliable datagram reader for this stream, if there is one.
+    ///
+    /// - Important: A reader will be returned only the first time this function is invoked. Any successive calls will yield `nil`.
+    public mutating func takeDatagramReader() -> sending NIOHTTPServer.DatagramReader? {
+        self.datagramReader?.swap(newValue: nil)
+    }
+}
+#endif  // HTTP3 && UnstableHTTPDatagrams
