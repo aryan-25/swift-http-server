@@ -86,7 +86,10 @@ extension NIOHTTPServer {
         do {
             negotiatedChannel = try await upgradeResult.get()
         } catch {
-            self.logger.debug("Negotiating ALPN failed", metadata: ["error": "\(error)"])
+            self.logger.debug(
+                "Negotiating ALPN failed",
+                error: error
+            )
             return
         }
 
@@ -107,21 +110,25 @@ extension NIOHTTPServer {
                     let connection = Connection(
                         server: self,
                         context: context,
-                        httpProtocol: .http1_1(inbound: inbound, outbound: outbound)
+                        httpProtocol: .http1_1(
+                            channel: requestChannel.channel,
+                            inbound: inbound,
+                            outbound: outbound
+                        )
                     )
                     do {
                         try await connectionHandler.handleConnection(connection: connection, context: context)
                     } catch {
                         self.logger.debug(
                             "Error thrown by connection handler",
-                            metadata: ["error": "\(error)"]
+                            error: error
                         )
                     }
                 }
             } catch {
                 self.logger.debug(
                     "Error handling HTTP/1.1 connection",
-                    metadata: ["error": "\(error)"]
+                    error: error
                 )
             }
 
@@ -143,7 +150,7 @@ extension NIOHTTPServer {
             } catch {
                 self.logger.debug(
                     "Error thrown by connection handler",
-                    metadata: ["error": "\(error)"]
+                    error: error
                 )
             }
         }
@@ -189,9 +196,9 @@ extension NIOHTTPServer {
                     }
                 }
             } catch {
-                self.logger.error(
+                self.logger.debug(
                     "Error thrown while iterating over incoming HTTP/2 streams",
-                    metadata: ["error": "\(error)"]
+                    error: error
                 )
             }
 
@@ -204,9 +211,9 @@ extension NIOHTTPServer {
             } catch ChannelError.alreadyClosed {
                 ()
             } catch {
-                self.logger.error(
+                self.logger.debug(
                     "Error thrown while closing the HTTP/2 connection channel",
-                    metadata: ["error": "\(error)"]
+                    error: error
                 )
             }
         }
@@ -379,19 +386,22 @@ extension NIOHTTPServer {
                     return
                 }
 
-                _ = try await self.invokeHandler(
+                // Built per request, as on HTTP/1.1. A stream carries exactly one request, so this runs once.
+                let requestContext = RequestContext(connectionContext: context, channel: channel.channel)
+
+                _ = await self.invokeHandler(
                     request: httpRequest,
                     iterator: iterator,
                     outbound: outbound,
-                    handler: handler,
-                    context: context
+                    requestContext: requestContext,
+                    handler: handler
                 )
 
-                // TODO: handle other state scenarios.
-                // For example, if we didn't finish reading but we wrote back a response, we
-                // should send a RST_STREAM with NO_ERROR set. If we finished reading but we
-                // didn't write back a response, then RST_STREAM is also likely appropriate but
-                // unclear about the error.
+                // TODO: handle the remaining state scenarios for a handler that returned without throwing. For
+                // example, if we didn't finish reading but we wrote back a response, we should send a RST_STREAM with
+                // NO_ERROR set. If we finished reading but we didn't write back a response, then RST_STREAM is also
+                // likely appropriate but unclear about the error. (A handler that throws already resets the stream;
+                // see `invokeHandler`.)
 
                 // Finish the outbound and wait on the close future to make sure all pending
                 // writes are actually written.
@@ -401,7 +411,8 @@ extension NIOHTTPServer {
         } catch {
             self.logger.debug(
                 "Error thrown while handling stream",
-                metadata: ["error": "\(error)", "protocol": "\(context.httpVersion)"]
+                error: error,
+                metadata: [LoggingKeys.protocol: "\(context.httpVersion)"]
             )
             try? await channel.channel.close()
         }
@@ -435,11 +446,9 @@ extension NIOHTTPServer {
                             return .certificateVerified(.init(.init(nioSSLCerts)))
 
                         case .failed(let error):
-                            self.logger.error(
+                            self.logger.debug(
                                 "Custom certificate verification failed",
-                                metadata: [
-                                    "failure-reason": .string(error.reason)
-                                ]
+                                error: error
                             )
                             return .failed
                         }
