@@ -34,11 +34,10 @@ struct ServerChannelTests {
             )
         )
 
-        let channels = try await server.makeServerChannels()
-        defer { server.close(serverChannels: channels) }
-
-        #expect(channels.count == 1)
-        #expect(channels[0].isPlaintextHTTP1_1)
+        try await server.withServerChannels { channels in
+            #expect(channels.count == 1)
+            #expect(channels[0].isPlaintextHTTP1_1)
+        }
     }
 
     @available(anyAppleOS 26.0, *)
@@ -66,11 +65,10 @@ struct ServerChannelTests {
             )
         )
 
-        let channels = try await server.makeServerChannels()
-        defer { server.close(serverChannels: channels) }
-
-        #expect(channels.count == 1)
-        #expect(channels[0].isSecureUpgrade)
+        try await server.withServerChannels { channels in
+            #expect(channels.count == 1)
+            #expect(channels[0].isSecureUpgrade)
+        }
     }
 
     #if HTTP3
@@ -91,11 +89,10 @@ struct ServerChannelTests {
             )
         )
 
-        let channels = try await server.makeServerChannels()
-        defer { server.close(serverChannels: channels) }
-
-        #expect(channels.count == 1)
-        #expect(channels[0].isHTTP3)
+        try await server.withServerChannels { channels in
+            #expect(channels.count == 1)
+            #expect(channels[0].isHTTP3)
+        }
     }
 
     @available(anyAppleOS 26.0, *)
@@ -124,17 +121,16 @@ struct ServerChannelTests {
             )
         )
 
-        let channels = try await server.makeServerChannels()
-        defer { server.close(serverChannels: channels) }
+        try await server.withServerChannels { channels in
+            #expect(channels.count == 2)
+            #expect(channels[0].isHTTP3)
+            #expect(channels[1].isSecureUpgrade)
 
-        #expect(channels.count == 2)
-        #expect(channels[0].isHTTP3)
-        #expect(channels[1].isSecureUpgrade)
-
-        // Check whether both channels share the same port
-        let http3Address = try #require(channels[0].localAddress)
-        let secureUpgradeAddress = try #require(channels[1].localAddress)
-        #expect(http3Address.port == secureUpgradeAddress.port)
+            // Check whether both channels share the same port
+            let http3Address = try #require(channels[0].localAddress)
+            let secureUpgradeAddress = try #require(channels[1].localAddress)
+            #expect(http3Address.port == secureUpgradeAddress.port)
+        }
     }
     #endif  // HTTP3
 }
@@ -172,15 +168,15 @@ extension NIOHTTPServer.ServerChannel {
 
     var localAddress: NIOCore.SocketAddress? {
         switch self {
-        case .plaintextHTTP1_1(let serverChannel, _):
-            serverChannel.channel.localAddress
+        case .plaintextHTTP1_1(let plaintext):
+            plaintext.socketChannel.channel.localAddress
 
-        case .secureUpgrade(let serverChannel, _):
-            serverChannel.channel.localAddress
+        case .secureUpgrade(let secureUpgrade):
+            secureUpgrade.socketChannel.channel.localAddress
 
         #if HTTP3
-        case .http3(let serverChannel, _):
-            serverChannel.localAddress
+        case .http3(let http3):
+            http3.socketChannel.localAddress
         #endif
         }
     }

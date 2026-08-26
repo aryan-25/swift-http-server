@@ -105,58 +105,54 @@ extension NIOHTTPServer {
         }
     }
 
-    /// Creates and binds a QUIC channel for each of the provided bind targets, and returns every bound channel
-    /// alongside the associated HTTP/3 connection multiplexer.
-    func setupHTTP3ServerChannels(
+    /// Binds a QUIC channel for each of the provided bind targets, vends every bound channel alongside the associated
+    /// HTTP/3 connection multiplexer to `body`, and closes the channels once `body` returns (or throws).
+    func withHTTP3ServerChannels(
         bindTargets: [NIOHTTPServerConfiguration.BindTarget],
         http3Configuration: NIOHTTPServerConfiguration.HTTP3,
         authenticationConfiguration: NIOQUIC.AuthenticationConfiguration,
-        authenticator: NIOQUIC.Authenticator?
-    ) async throws -> [(
-        quicChannel: any Channel,
-        connectionMultiplexer: HTTP3ServerConnectionMultiplexer<
-            NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>,
-            NIOQUIC.QUICStreamCreator
-        >
-    )] {
+        authenticator: NIOQUIC.Authenticator?,
+        _ body: ([ServerChannel.HTTP3]) async throws -> Void
+    ) async throws {
         let bootstrap = DatagramBootstrap(group: .singletonMultiThreadedEventLoopGroup)
             .channelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
 
-        var serverChannels = [
-            (
-                any Channel,
-                HTTP3ServerConnectionMultiplexer<
-                    NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, NIOQUIC.QUICStreamCreator
-                >
-            )
-        ]()
+        var serverChannels = [ServerChannel.HTTP3]()
         do {
             for bindTarget in bindTargets {
                 switch bindTarget.backing {
                 case .hostAndPort(let host, let port):
                     let (quicChannel, multiplexer) = try await bootstrap.bind(host: host, port: port) { channel in
                         channel.eventLoop.makeCompletedFuture {
-                            try self.setupQUICChannel(
+                            let multiplexer = try self.setupQUICChannel(
                                 channel: channel,
                                 http3Configuration: http3Configuration,
                                 authenticationConfiguration: authenticationConfiguration,
                                 authenticator: authenticator
                             )
+                            return (channel, multiplexer)
                         }
                     }
 
-                    serverChannels.append((quicChannel, multiplexer))
+                    serverChannels.append(.init(socketChannel: quicChannel, connectionMultiplexer: multiplexer))
                 }
             }
+
+            try await body(serverChannels)
         } catch {
-            // A later bind failed: close any channels that are already bound to avoid leaking sockets.
-            for (serverChannel, _) in serverChannels {
-                try? await serverChannel.close()
-            }
+            // Either a bind failed, or `body` threw. Close all bound server channels and throw.
+            await self.close(serverChannels)
             throw error
         }
 
-        return serverChannels
+        await self.close(serverChannels)
+    }
+
+    /// Closes each bound channel, ignoring close failures.
+    private func close(_ handles: [ServerChannel.HTTP3]) async {
+        for handle in handles {
+            try? await handle.socketChannel.close()
+        }
     }
 
     /// Installs the QUIC handler on a bound datagram channel and returns the channel alongside the connection
@@ -166,12 +162,9 @@ extension NIOHTTPServer {
         http3Configuration: NIOHTTPServerConfiguration.HTTP3,
         authenticationConfiguration: NIOQUIC.AuthenticationConfiguration,
         authenticator: NIOQUIC.Authenticator?
-    ) throws -> (
-        quicChannel: any Channel,
-        connectionMultiplexer: HTTP3ServerConnectionMultiplexer<
-            NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, NIOQUIC.QUICStreamCreator
-        >
-    ) {
+    ) throws -> HTTP3ServerConnectionMultiplexer<
+        NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, NIOQUIC.QUICStreamCreator
+    > {
         let connectionMultiplexer = HTTP3ServerConnectionMultiplexer<
             NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>,
             NIOQUIC.QUICStreamCreator
@@ -210,7 +203,7 @@ extension NIOHTTPServer {
 
         try channel.pipeline.syncOperations.addHandler(quicHandler)
 
-        return (channel, connectionMultiplexer)
+        return connectionMultiplexer
     }
 
     /// Sets up an `HTTP3ConnectionHandler` and adds it to the connection channel pipeline.

@@ -111,17 +111,16 @@ extension NIOHTTPServer {
         }
     }
 
-    func setupHTTP1_1ServerChannels(
-        bindTargets: [NIOHTTPServerConfiguration.BindTarget]
-    ) async throws -> [(
-        NIOAsyncChannel<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, Never>, ServerQuiescingHelper
-    )] {
+    /// Binds a plaintext HTTP/1.1 server channel for each of the provided bind targets, vends every bound channel
+    /// alongside its `ServerQuiescingHelper` to `body`, and closes the channels once `body` returns (or throws).
+    func withHTTP1_1ServerChannels(
+        bindTargets: [NIOHTTPServerConfiguration.BindTarget],
+        _ body: ([ServerChannel.PlaintextHTTP1_1]) async throws -> Void
+    ) async throws {
         let bootstrap = ServerBootstrap(group: self.eventLoopGroup)
             .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
 
-        var serverChannels = [
-            (NIOAsyncChannel<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, Never>, ServerQuiescingHelper)
-        ]()
+        var serverChannels = [ServerChannel.PlaintextHTTP1_1]()
 
         do {
             for bindTarget in bindTargets {
@@ -151,20 +150,25 @@ extension NIOHTTPServer {
                             isSecure: false
                         )
                     }
-                    serverChannels.append((serverChannel, serverQuiescingHelper))
+                    serverChannels.append(.init(socketChannel: serverChannel, quiescingHelper: serverQuiescingHelper))
                 }
             }
+
+            try await body(serverChannels)
         } catch {
-            // A later bind failed: close any channels we already bound to avoid leaking sockets.
-            // We await the closes so the sockets are fully released by the time we throw, giving the
-            // caller deterministic semantics: when `serve` throws, all cleanup is done.
-            for (serverChannel, _) in serverChannels {
-                try? await serverChannel.channel.close()
-            }
+            // Either a bind failed, or `body` threw. Close all bound server channels and throw.
+            await self.close(serverChannels)
             throw error
         }
 
-        return serverChannels
+        await self.close(serverChannels)
+    }
+
+    /// Closes each bound HTTP/1.1 server channel, ignoring close failures.
+    private func close(_ handles: [ServerChannel.PlaintextHTTP1_1]) async {
+        for handle in handles {
+            try? await handle.socketChannel.channel.close()
+        }
     }
 
     /// Configures the HTTP/1.1 server pipeline and the keep-alive handler.

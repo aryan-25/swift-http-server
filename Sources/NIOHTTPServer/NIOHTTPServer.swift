@@ -184,17 +184,8 @@ public struct NIOHTTPServer: HTTPServer {
         // binding succeeded, the serve loop returned normally, or an error propagated.
         defer { self.finishListeningAddressPromise() }
 
-        let serverChannels = try await self.makeServerChannels()
-
-        return try await withTaskCancellationHandler {
-            try await withGracefulShutdownHandler {
-                try await self._serve(serverChannels: serverChannels, connectionHandler: connectionHandler)
-            } onGracefulShutdown: {
-                self.beginGracefulShutdown(serverChannels: serverChannels)
-            }
-        } onCancel: {
-            // Forcefully close down the server channels
-            self.close(serverChannels: serverChannels)
+        try await self.withServerChannels { serverChannels in
+            try await self._serve(serverChannels: serverChannels, connectionHandler: connectionHandler)
         }
     }
 
@@ -224,61 +215,72 @@ public struct NIOHTTPServer: HTTPServer {
         )
     }
 
-    /// Creates and returns server channels based on the configured transport security.
-    func makeServerChannels() async throws -> [ServerChannel] {
-        var serverChannels = [ServerChannel]()
-        var secureUpgradeBindTargets = self.configuration.bindTargets
+    func withServerChannels(_ body: ([ServerChannel]) async throws -> Void) async throws {
+        try await self._withServerChannels { serverChannels in
+            try await withTaskCancellationHandler {
+                try await withGracefulShutdownHandler {
+                    if Task.isCancelled || Task.isShuttingDownGracefully { return }
+                    try await body(serverChannels)
+                } onGracefulShutdown: {
+                    self.beginGracefulShutdown(serverChannels: serverChannels)
+                }
+            } onCancel: {
+                // Forcefully close down the server channels
+                self.beginForcefulShutdown(serverChannels: serverChannels)
+            }
+        }
+    }
 
+    private func _withServerChannels(_ body: ([ServerChannel]) async throws -> Void) async throws {
         #if HTTP3
         if let http3Configuration = self.configuration.supportedHTTPVersions.http3ConfigIfSupported,
             let authenticationConfiguration = self.configuration.quicAuthenticationConfiguration
         {
-            let http3Channels = try await self.setupHTTP3ServerChannels(
+            return try await self.withHTTP3ServerChannels(
                 bindTargets: self.configuration.bindTargets,
                 http3Configuration: http3Configuration,
                 authenticationConfiguration: authenticationConfiguration,
                 authenticator: self.configuration.quicAuthenticator
-            )
-            serverChannels.append(
-                contentsOf: http3Channels.map { (quicChannel, mux) in
-                    .http3(quicChannel: quicChannel, connectionMultiplexer: mux)
+            ) { http3Channels in
+                let bindTargets = http3Channels.map { $0.socketChannel.localAddress }
+
+                guard let sslContext = self.configuration.sslContext else {
+                    // `supportedHTTPVersions == [.http3]` here. We therefore just serve HTTP/3 channel(s).
+                    try self.addressesBound(bindTargets)
+                    return try await body(http3Channels.map { .http3($0) })
                 }
-            )
 
-            if self.configuration.sslContext == nil {
-                // `supportedHTTPVersions == [.http3]` here. We therefore just return HTTP/3 channel(s).
-                try self.addressesBound(http3Channels.map { (channel, _) in channel.localAddress })
-                return serverChannels
-            }
-
-            // We also need to set up secure upgrade channel(s) on the same port.
-            secureUpgradeBindTargets = try http3Channels.map { (http3Channel, _) in
-                try NIOHTTPServerConfiguration.BindTarget(http3Channel.localAddress)
+                // We also need to set up secure upgrade channel(s) on the same port(s).
+                return try await self.withSecureUpgradeServerChannels(
+                    bindTargets: bindTargets.map { try NIOHTTPServerConfiguration.BindTarget($0) },
+                    http2Configuration: self.configuration.supportedHTTPVersions.http2ConfigIfSupported,
+                    sslContext: sslContext
+                ) { secureUpgradeChannels in
+                    try self.addressesBound(secureUpgradeChannels.map { $0.socketChannel.channel.localAddress })
+                    try await body(
+                        http3Channels.map { .http3($0) } + secureUpgradeChannels.map { .secureUpgrade($0) }
+                    )
+                }
             }
         }
         #endif  // HTTP3
 
         guard let sslContext = self.configuration.sslContext else {
             // Set up plaintext HTTP/1.1 channel(s).
-            let http1Channels = try await self.setupHTTP1_1ServerChannels(bindTargets: secureUpgradeBindTargets)
-            try self.addressesBound(http1Channels.map { (channel, _) in channel.channel.localAddress })
-            return http1Channels.map { .plaintextHTTP1_1(channel: $0, quiescingHelper: $1) }
+            return try await self.withHTTP1_1ServerChannels(bindTargets: self.configuration.bindTargets) { channels in
+                try self.addressesBound(channels.map { $0.socketChannel.channel.localAddress })
+                try await body(channels.map { .plaintextHTTP1_1($0) })
+            }
         }
 
-        let secureUpgradeChannels = try await self.setupSecureUpgradeServerChannels(
-            bindTargets: secureUpgradeBindTargets,
+        return try await self.withSecureUpgradeServerChannels(
+            bindTargets: self.configuration.bindTargets,
             http2Configuration: self.configuration.supportedHTTPVersions.http2ConfigIfSupported,
             sslContext: sslContext
-        )
-        try self.addressesBound(secureUpgradeChannels.map { (channel, _) in channel.channel.localAddress })
-
-        serverChannels.append(
-            contentsOf: secureUpgradeChannels.map { (channel, quiescingHelper) in
-                .secureUpgrade(channel: channel, quiescingHelper: quiescingHelper)
-            }
-        )
-
-        return serverChannels
+        ) { secureUpgradeChannels in
+            try self.addressesBound(secureUpgradeChannels.map { $0.socketChannel.channel.localAddress })
+            try await body(secureUpgradeChannels.map { .secureUpgrade($0) })
+        }
     }
 
     private func _serve<Handler: NIOHTTPServerConnectionHandler>(
@@ -289,22 +291,22 @@ public struct NIOHTTPServer: HTTPServer {
             for serverChannel in serverChannels {
                 group.addTask {
                     switch serverChannel {
-                    case .plaintextHTTP1_1(let http1Channel, _):
+                    case .plaintextHTTP1_1(let handle):
                         try await self.serveInsecureHTTP1_1(
-                            serverChannel: http1Channel,
+                            serverChannel: handle.socketChannel,
                             connectionHandler: connectionHandler
                         )
 
-                    case .secureUpgrade(let secureUpgradeChannel, _):
+                    case .secureUpgrade(let handle):
                         try await self.serveSecureUpgrade(
-                            serverChannel: secureUpgradeChannel,
+                            serverChannel: handle.socketChannel,
                             connectionHandler: connectionHandler
                         )
 
                     #if HTTP3
-                    case .http3(_, let connectionMultiplexer):
+                    case .http3(let handle):
                         await self.serveHTTP3(
-                            connectionMultiplexer: connectionMultiplexer,
+                            connectionMultiplexer: handle.connectionMultiplexer,
                             connectionHandler: connectionHandler
                         )
                     #endif
@@ -444,33 +446,36 @@ public struct NIOHTTPServer: HTTPServer {
 
         for serverChannel in serverChannels {
             switch serverChannel {
-            case .plaintextHTTP1_1(_, let quiescingHelper), .secureUpgrade(_, let quiescingHelper):
-                quiescingHelper.initiateShutdown(promise: nil)
+            case .plaintextHTTP1_1(let handle):
+                handle.quiescingHelper.initiateShutdown(promise: nil)
+
+            case .secureUpgrade(let handle):
+                handle.quiescingHelper.initiateShutdown(promise: nil)
 
             #if HTTP3
-            case .http3(let quicChannel, _):
+            case .http3(let handle):
                 // Fire ChannelShouldQuiesceEvent directly on the QUIC channel.
-                quicChannel.pipeline.fireUserInboundEventTriggered(ChannelShouldQuiesceEvent())
+                handle.socketChannel.pipeline.fireUserInboundEventTriggered(ChannelShouldQuiesceEvent())
             #endif
             }
         }
     }
 
     /// Forcefully closes the server channels without waiting for existing connections to drain.
-    func close(serverChannels: [ServerChannel]) {
+    func beginForcefulShutdown(serverChannels: [ServerChannel]) {
         self.finishListeningAddressPromise()
 
         for serverChannel in serverChannels {
             switch serverChannel {
-            case .plaintextHTTP1_1(let http1Channel, _):
-                http1Channel.channel.close(promise: nil)
+            case .plaintextHTTP1_1(let handle):
+                handle.socketChannel.channel.close(promise: nil)
 
-            case .secureUpgrade(let secureUpgradeChannel, _):
-                secureUpgradeChannel.channel.close(promise: nil)
+            case .secureUpgrade(let handle):
+                handle.socketChannel.channel.close(promise: nil)
 
             #if HTTP3
-            case .http3(let quicChannel, _):
-                quicChannel.close(promise: nil)
+            case .http3(let handle):
+                handle.socketChannel.close(promise: nil)
             #endif
             }
         }

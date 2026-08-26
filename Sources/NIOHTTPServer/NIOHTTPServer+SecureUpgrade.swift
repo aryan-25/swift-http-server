@@ -219,15 +219,18 @@ extension NIOHTTPServer {
         }
     }
 
-    func setupSecureUpgradeServerChannels(
+    /// Binds a secure upgrade server channel for each of the provided bind targets, vends every bound channel
+    /// alongside its `ServerQuiescingHelper` to `body`, and closes the channels once `body` returns (or throws).
+    func withSecureUpgradeServerChannels(
         bindTargets: [NIOHTTPServerConfiguration.BindTarget],
         http2Configuration: NIOHTTPServerConfiguration.HTTP2?,
-        sslContext: NIOSSLContext
-    ) async throws -> [(NIOAsyncChannel<EventLoopFuture<NegotiatedChannel>, Never>, ServerQuiescingHelper)] {
+        sslContext: NIOSSLContext,
+        _ body: ([ServerChannel.SecureUpgrade]) async throws -> Void
+    ) async throws {
         let bootstrap = ServerBootstrap(group: self.eventLoopGroup)
             .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
 
-        var serverChannels = [(NIOAsyncChannel<EventLoopFuture<NegotiatedChannel>, Never>, ServerQuiescingHelper)]()
+        var serverChannels = [ServerChannel.SecureUpgrade]()
         do {
             for bindTarget in bindTargets {
                 switch bindTarget.backing {
@@ -253,20 +256,25 @@ extension NIOHTTPServer {
                             sslContext: sslContext
                         )
                     }
-                    serverChannels.append((serverChannel, serverQuiescingHelper))
+                    serverChannels.append(.init(socketChannel: serverChannel, quiescingHelper: serverQuiescingHelper))
                 }
             }
+
+            try await body(serverChannels)
         } catch {
-            // A later bind failed: close any channels we already bound to avoid leaking sockets.
-            // We await the closes so the sockets are fully released by the time we throw, giving the
-            // caller deterministic semantics: when `serve` throws, all cleanup is done.
-            for (serverChannel, _) in serverChannels {
-                try? await serverChannel.channel.close()
-            }
+            // Either a bind failed, or `body` threw. Close all bound server channels and throw.
+            await self.close(serverChannels)
             throw error
         }
 
-        return serverChannels
+        await self.close(serverChannels)
+    }
+
+    /// Closes each bound channel, ignoring close failures.
+    private func close(_ handles: [ServerChannel.SecureUpgrade]) async {
+        for handle in handles {
+            try? await handle.socketChannel.channel.close()
+        }
     }
 
     private func setupHTTP2Connection(
