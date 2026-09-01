@@ -19,14 +19,16 @@ import NIOHTTP2
 import NIOHTTPTypes
 import NIOHTTPTypesHTTP2
 import NIOPosix
-import NIOQUIC
 import NIOSSL
 import Testing
 
 @testable import NIOHTTPServer
 
 #if HTTP3
+import HTTP3
 @_spi(HTTP3AsyncInterface) import NIOHTTP3
+import NIOQUIC
+import NIOQUICHelpers
 #endif
 
 /// A testing utility that wraps an established HTTP/1.1, HTTP/2, or HTTP/3 client connection and provides an opaque
@@ -42,7 +44,11 @@ struct TestClientConnection {
         )
 
         #if HTTP3
-        case http3(connection: HTTP3ClientConnection<Never, QUICStreamCreator>, quicChannel: any Channel)
+        case http3(
+            quicChannel: any Channel,
+            connectionChannel: any Channel,
+            connection: HTTP3ClientConnection<Never, NIOQUIC.QUICStreamCreator>
+        )
         #endif
     }
 
@@ -71,7 +77,7 @@ struct TestClientConnection {
             return try await streamMultiplexer.makeRequestStream()
 
         #if HTTP3
-        case .http3(let http3Connection, _):
+        case .http3(_, _, let http3Connection):
             try #require(
                 expectedHTTPVersion == .http3,
                 "Unexpectedly established an HTTP/3 connection.",
@@ -112,9 +118,10 @@ struct TestClientConnection {
             }
 
         #if HTTP3
-        case .http3(_, let channel):
+        case .http3(let quicChannel, let connectionChannel, _):
             do {
-                try await channel.close()
+                try await quicChannel.close()
+                try await connectionChannel.close()
             } catch ChannelError.alreadyClosed {
                 ()
             }
@@ -149,10 +156,26 @@ extension TestClientConnection {
 
 @available(anyAppleOS 26.0, *)
 extension TestClientConnection {
+    /// The information needed to establish a test client connection to a ``NIOHTTPServer``.
+    struct Configuration {
+        var logger: Logger
+        var httpVersion: NIOHTTPServer.HTTPVersion
+        var trustRootsPEMPath: String?
+        var chain: ChainPrivateKeyPair? = nil
+
+        #if HTTP3
+        /// The client's QUIC configuration. Only applies when ``httpVersion`` is `.http3`.
+        var quicConfiguration: QUICConfiguration? = nil
+
+        /// The HTTP/3 settings the client sends to the server. Only applies when ``httpVersion`` is `.http3`.
+        var http3ConnectionSettings = HTTP3Settings()
+        #endif
+    }
+
     /// Establishes a client connection to `serverAddress` based on the provided `httpVersion`, runs `body` with the
     /// resulting ``TestClientConnection``. The stream and the underlying connection are closed when `body` returns.
     static func withConnection(
-        configuration: TestHelpers.ClientConfiguration,
+        configuration: Configuration,
         serverAddress: NIOHTTPServer.SocketAddress,
         body: (TestClientConnection) async throws -> Void
     ) async throws {
@@ -165,7 +188,7 @@ extension TestClientConnection {
 
         case (.http1_1, .some(let trustRootsPEMPath)), (.http2, .some(let trustRootsPEMPath)):
             let tlsConfiguration =
-                if let clientChain = configuration.clientChain {
+                if let clientChain = configuration.chain {
                     try TLSConfiguration.makeTestClientMTLSConfiguration(
                         testTrustRoots: .file(trustRootsPEMPath),
                         clientChain: clientChain,
@@ -183,22 +206,39 @@ extension TestClientConnection {
 
         #if HTTP3
         case (.http3, .some(let trustRootsPEMPath)):
-            let (quicChannel, multiplexer) = try await DatagramBootstrap(group: .singletonMultiThreadedEventLoopGroup)
-                .setupTestHTTP3Client(logger: configuration.logger, trustRootsPath: trustRootsPEMPath)
+            let (quicChannel, connectionCreator) =
+                try await DatagramBootstrap(group: .singletonMultiThreadedEventLoopGroup).setupTestHTTP3Client(
+                    logger: configuration.logger,
+                    trustRootsPath: trustRootsPEMPath,
+                    quicConfiguration: configuration.quicConfiguration
+                        ?? .makeClientQUICConfig(caPath: trustRootsPEMPath),
+                    http3ConnectionSettings: configuration.http3ConnectionSettings
+                )
 
-            do {
-                let h3Connection = try await multiplexer.concurrencyView.createConnection(
-                    serverName: "127.0.0.1",
-                    remoteAddress: .init(ipAddress: serverAddress.host, port: serverAddress.port),
-                    inboundPushStreamInitializer: { _ in fatalError("Push streams not supported") }
+            let multiplexer = HTTP3ClientConnectionMultiplexer<
+                TestHTTP3SingleConnectionCreator, NIOQUIC.QUICStreamCreator
+            >(
+                eventLoop: quicChannel.eventLoop,
+                createNewConnection: connectionCreator
+            )
+
+            let h3Connection = try await multiplexer.concurrencyView.createConnection(
+                serverName: "127.0.0.1",
+                remoteAddress: .init(ipAddress: serverAddress.host, port: serverAddress.port),
+                inboundPushStreamInitializer: { _ in fatalError("Push streams not supported") }
+            )
+
+            let connectionChannel = try await quicChannel.eventLoop.flatSubmit {
+                connectionCreator.value.connectionChannelPromise.futureResult
+            }.get()
+
+            connection = TestClientConnection(
+                connectionProtocol: .http3(
+                    quicChannel: quicChannel,
+                    connectionChannel: connectionChannel,
+                    connection: h3Connection
                 )
-                connection = TestClientConnection(
-                    connectionProtocol: .http3(connection: h3Connection, quicChannel: quicChannel)
-                )
-            } catch {
-                try? await quicChannel.close()
-                throw error
-            }
+            )
         #endif
 
         default:
@@ -217,7 +257,7 @@ extension TestClientConnection {
     /// Establishes a client connection to `serverAddress`, opens a request stream on it, and runs the `body` closure.
     /// The stream and the underlying connection are closed when `body` returns.
     static func withConnectedRequestChannel(
-        configuration: TestHelpers.ClientConfiguration,
+        configuration: Configuration,
         serverAddress: NIOHTTPServer.SocketAddress,
         body: (
             NIOAsyncChannelInboundStream<HTTPResponsePart>,
@@ -229,6 +269,42 @@ extension TestClientConnection {
                 .executeThenClose(body)
         }
     }
+
+    #if HTTP3 && UnstableHTTPDatagrams
+    /// Establishes a client connection to `serverAddress`, opens a request stream on it, and runs the `body` closure
+    /// with the HTTP/3 connection channel (for reading/writing datagrams) and the request stream channel. The stream
+    /// and the underlying connection are closed when `body` returns.
+    static func withConnectedHTTP3ConnectionAndRequestChannel(
+        configuration: Configuration,
+        serverAddress: NIOHTTPServer.SocketAddress,
+        body: (
+            _ streamID: QUICStreamID,
+            _ connectionChannel: NIOAsyncChannel<HTTP3Datagram, HTTP3Datagram>,
+            _ streamChannel: NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>
+        ) async throws -> Void
+    ) async throws {
+        try await Self.withConnection(configuration: configuration, serverAddress: serverAddress) { connection in
+            guard case .http3(_, let connectionChannel, let connectionHandle) = connection.connectionProtocol else {
+                Issue.record("Expected an HTTP/3 connection")
+                return
+            }
+
+            // Wrap the connection channel in an async channel so we can conveniently read/write datagrams.
+            let asyncConnectionChannel = try await connectionChannel.eventLoop.submit {
+                try NIOAsyncChannel<HTTP3Datagram, HTTP3Datagram>(wrappingChannelSynchronously: connectionChannel)
+            }.get()
+
+            let streamChannel = try await connectionHandle.makeRequestStream()
+            let streamID = try await streamChannel.channel.getOption(.quicStreamID).get()
+
+            try await body(
+                QUICStreamID(rawValue: streamID),
+                asyncConnectionChannel,
+                streamChannel
+            )
+        }
+    }
+    #endif  // HTTP3 && UnstableHTTPDatagrams
 }
 
 extension NIOHTTP2Handler.AsyncStreamMultiplexer<Channel> {

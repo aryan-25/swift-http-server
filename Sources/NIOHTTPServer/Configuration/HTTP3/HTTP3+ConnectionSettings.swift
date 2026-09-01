@@ -40,9 +40,9 @@ extension NIOHTTPServerConfiguration.HTTP3 {
         /// The default HTTP/3 connection settings configuration.
         ///
         /// Uses the following default values:
-        /// - `qpackMaximumTableCapacity`: 0.
-        /// - `qpackBlockedStreams`: 0.
-        /// - `maximumFieldSectionSize`: `nil` (no field section size limit).
+        /// - `qpackMaximumTableCapacity`: 0
+        /// - `qpackBlockedStreams`: 0
+        /// - `maximumFieldSectionSize`: `nil` (no field section size limit)
         public static var defaults: Self {
             Self(
                 qpackMaximumTableCapacity: 0,
@@ -55,12 +55,23 @@ extension NIOHTTPServerConfiguration.HTTP3 {
 
 @available(anyAppleOS 26.0, *)
 extension HTTP3.HTTP3Settings {
-    init(_ configuration: NIOHTTPServerConfiguration.HTTP3.ConnectionSettings) {
+    init(_ connectionConfiguration: NIOHTTPServerConfiguration.HTTP3.ConnectionSettings) {
         self.init(
-            qpackMaximumTableCapacity: configuration.qpackMaximumTableCapacity,
-            qpackBlockedStreams: configuration.qpackBlockedStreams,
-            maximumFieldSectionSize: configuration.maximumFieldSectionSize
+            qpackMaximumTableCapacity: connectionConfiguration.qpackMaximumTableCapacity,
+            qpackBlockedStreams: connectionConfiguration.qpackBlockedStreams,
+            maximumFieldSectionSize: connectionConfiguration.maximumFieldSectionSize
         )
     }
+
+    #if UnstableHTTPDatagrams
+    init(_ connectionConfiguration: NIOHTTPServerConfiguration.HTTP3.ConnectionSettings, supportsDatagrams: Bool) {
+        self.init(
+            qpackMaximumTableCapacity: connectionConfiguration.qpackMaximumTableCapacity,
+            qpackBlockedStreams: connectionConfiguration.qpackBlockedStreams,
+            maximumFieldSectionSize: connectionConfiguration.maximumFieldSectionSize,
+            h3Datagram: supportsDatagrams
+        )
+    }
+    #endif  // UnstableHTTPDatagrams
 }
 #endif  // HTTP3

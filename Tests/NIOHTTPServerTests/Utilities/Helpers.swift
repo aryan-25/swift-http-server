@@ -27,6 +27,12 @@ import X509
 
 @testable import NIOHTTPServer
 
+#if HTTP3
+import NIOHTTP3
+import NIOQUIC
+import NIOQUICHelpers
+#endif
+
 extension NIOAsyncTestingChannel {
     /// Forwards all of our outbound writes to `other` and vice-versa.
     func glueTo(_ other: NIOAsyncTestingChannel) async throws {
@@ -123,11 +129,17 @@ extension TLSConfiguration {
 extension QUICConfiguration {
     /// Creates a client QUIC configuration.
     ///
-    /// - Parameter caPath: The filepath of the client's trusted roots.
-    static func makeClientQUICConfig(caPath: String?) -> QUICConfiguration {
+    /// - Parameters:
+    ///   - caPath: The filepath of the client's trusted roots.
+    ///   - maxDatagramFrameSize: The maximum datagram frame size in bytes.
+    static func makeClientQUICConfig(
+        caPath: String?,
+        maxDatagramFrameSize: Int = 65535
+    ) -> QUICConfiguration {
         QUICConfiguration.client(
             verificationConfiguration: .x509Certificates(trustRootsFilePath: caPath),
-            applicationProtocols: [NIOHTTPServer.HTTPVersion.http3.alpnIdentifier]
+            applicationProtocols: [NIOHTTPServer.HTTPVersion.http3.alpnIdentifier],
+            maxDatagramFrameSize: maxDatagramFrameSize
         )
     }
 }
@@ -209,20 +221,12 @@ struct TestHelpers {
         }
     }
 
-    /// The information needed to establish a test client connection to a ``NIOHTTPServer``.
-    struct ClientConfiguration {
-        let logger: Logger
-        let httpVersion: NIOHTTPServer.HTTPVersion
-        let trustRootsPEMPath: String?
-        var clientChain: ChainPrivateKeyPair? = nil
-    }
-
     /// Starts `server` with `serverHandler`, establishes a client connection described by `clientConfiguration`,
     /// then runs `body` with the server's listening address and the resulting ``TestClientConnection``.
     ///
     /// The client connection is closed and the server task is cancelled when `body` returns.
     static func withClientServerConnection(
-        clientConfiguration: ClientConfiguration,
+        clientConfiguration: TestClientConnection.Configuration,
         server: NIOHTTPServer,
         serverHandler: some HTTPServerRequestHandler<
             NIOHTTPServer.RequestContext,
@@ -246,7 +250,7 @@ struct TestHelpers {
     ///
     /// The client connection is closed and the server task is cancelled when `body` returns.
     static func withClientServerConnection<Handler: NIOHTTPServerConnectionHandler>(
-        clientConfiguration: ClientConfiguration,
+        clientConfiguration: TestClientConnection.Configuration,
         server: NIOHTTPServer,
         connectionHandler: Handler,
         body: (NIOHTTPServer.SocketAddress, TestClientConnection) async throws -> Void
@@ -267,7 +271,7 @@ struct TestHelpers {
     ///
     /// The request stream, the client connection, and the server task are all torn down when `body` returns.
     static func withClientServerRequestChannel(
-        clientConfiguration: ClientConfiguration,
+        clientConfiguration: TestClientConnection.Configuration,
         server: NIOHTTPServer,
         serverHandler: some HTTPServerRequestHandler<
             NIOHTTPServer.RequestContext,
@@ -296,7 +300,7 @@ struct TestHelpers {
     ///
     /// The request stream, the client connection, and the server task are all torn down when `body` returns.
     static func withClientServerRequestChannel<Handler: NIOHTTPServerConnectionHandler>(
-        clientConfiguration: ClientConfiguration,
+        clientConfiguration: TestClientConnection.Configuration,
         server: NIOHTTPServer,
         connectionHandler: Handler,
         body: (
@@ -314,6 +318,35 @@ struct TestHelpers {
             }
         }
     }
+
+    #if HTTP3 && UnstableHTTPDatagrams
+    static func withHTTP3ClientServerConnectionAndRequestChannel(
+        clientConfiguration: TestClientConnection.Configuration,
+        server: NIOHTTPServer,
+        serverHandler: some HTTPServerRequestHandler<
+            NIOHTTPServer.RequestContext,
+            NIOHTTPServer.Reader,
+            NIOHTTPServer.ResponseSender
+        >,
+        body: (
+            _ serverAddress: NIOHTTPServer.SocketAddress,
+            _ streamID: QUICStreamID,
+            _ connectionChannel: NIOAsyncChannel<HTTP3Datagram, HTTP3Datagram>,
+            _ streamChannel: NIOAsyncChannel<HTTPResponsePart, HTTPRequestPart>
+        ) async throws -> Void
+    ) async throws {
+        try #require(server.configuration.supportedHTTPVersions.contains(.http3))
+
+        try await Self.withServer(server: server, serverHandler: serverHandler) { serverAddress in
+            try await TestClientConnection.withConnectedHTTP3ConnectionAndRequestChannel(
+                configuration: clientConfiguration,
+                serverAddress: serverAddress
+            ) { streamID, connectionChannel, streamChannel in
+                try await body(serverAddress, streamID, connectionChannel, streamChannel)
+            }
+        }
+    }
+    #endif  // HTTP3 && UnstableHTTPDatagrams
 
     /// Reads from `responseStream` and asserts each part matches the expected head, body, and trailers in order.
     static func validateResponse(
@@ -366,7 +399,7 @@ struct TestHelpers {
 
 @available(anyAppleOS 26.0, *)
 extension TestHelpers {
-    static func makeSecureUpgradeServerConfiguration(
+    static func makeTLSServerConfiguration(
         supportedHTTPVersions: Set<NIOHTTPServerConfiguration.HTTPVersion> = [.http1_1, .http2],
         concurrentListeners: Int = 1
     ) throws -> (NIOHTTPServerConfiguration, String) {
@@ -393,7 +426,7 @@ extension TestHelpers {
         serverLogger: Logger,
         concurrentListeners: Int = 1,
         serverConfigurationOverride: ((inout NIOHTTPServerConfiguration) -> Void)? = nil
-    ) throws -> (NIOHTTPServer, ClientConfiguration) {
+    ) throws -> (NIOHTTPServer, TestClientConnection.Configuration) {
         let bindTargets = (0..<concurrentListeners).map { _ in
             NIOHTTPServerConfiguration.BindTarget.hostAndPort(host: "127.0.0.1", port: 0)
         }
@@ -411,7 +444,7 @@ extension TestHelpers {
 
             trustRootsPEMPath = nil
         } else {
-            (serverConfiguration, trustRootsPEMPath) = try self.makeSecureUpgradeServerConfiguration(
+            (serverConfiguration, trustRootsPEMPath) = try self.makeTLSServerConfiguration(
                 supportedHTTPVersions: [.init(version)],
                 concurrentListeners: concurrentListeners
             )
@@ -419,7 +452,7 @@ extension TestHelpers {
         }
 
         let server = NIOHTTPServer(logger: serverLogger, configuration: serverConfiguration)
-        let clientConfiguration = ClientConfiguration(
+        let clientConfiguration = TestClientConnection.Configuration(
             logger: clientLogger,
             httpVersion: version,
             trustRootsPEMPath: trustRootsPEMPath
@@ -434,7 +467,7 @@ extension TestHelpers {
         serverLogger: Logger,
         serverTrustConfiguration: NIOHTTPServerConfiguration.TransportSecurity.MTLSTrustConfiguration,
         concurrentListeners: Int = 1
-    ) throws -> (NIOHTTPServer, ClientConfiguration) {
+    ) throws -> (NIOHTTPServer, TestClientConnection.Configuration) {
         guard version != .plaintextHTTP1_1 else {
             throw NIOHTTPServerConfigurationError.incompatibleTransportSecurity
         }
@@ -464,15 +497,34 @@ extension TestHelpers {
             )
         )
 
-        let clientConfiguration = ClientConfiguration(
+        let clientConfiguration = TestClientConnection.Configuration(
             logger: clientLogger,
             httpVersion: version,
             trustRootsPEMPath: serverCAPath,
-            clientChain: clientChain
+            chain: clientChain
         )
 
         return (server, clientConfiguration)
     }
+
+    #if HTTP3 && UnstableHTTPDatagrams
+    /// Reads the next datagram from `reader`, returning its bytes, or `nil` if the datagram stream has ended.
+    static func readDatagram(_ reader: inout NIOHTTPServer.DatagramReader) async throws -> [UInt8]? {
+        var bytes: [UInt8] = []
+        var hasEnded = false
+
+        try await reader.read { buffer, finalElement in
+            if case .some = finalElement {
+                hasEnded = true
+            }
+            for index in buffer.indices {
+                bytes.append(buffer[index])
+            }
+        }
+
+        return hasEnded ? nil : bytes
+    }
+    #endif  // HTTP3 && UnstableHTTPDatagrams
 }
 
 @available(anyAppleOS 26.0, *)

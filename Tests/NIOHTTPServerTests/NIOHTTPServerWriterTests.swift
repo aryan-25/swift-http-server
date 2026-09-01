@@ -14,10 +14,15 @@
 
 import BasicContainers
 import NIOCore
+import NIOEmbedded
 import NIOHTTPTypes
 import Testing
 
 @testable import NIOHTTPServer
+
+#if HTTP3 && UnstableHTTPDatagrams
+import NIOHTTP3
+#endif
 
 @Suite
 struct NIOHTTPServerWriterTests {
@@ -90,11 +95,11 @@ struct NIOHTTPServerWriterTests {
         let sender = NIOHTTPServer.ResponseSender(
             writer: outboundWriter,
             writerState: .init(),
-            datagramWriter: nil
+            datagramStreamFuture: nil
         )
 
         var responseBodyWriter = try await sender.send(.init(status: .ok))
-        let datagramWriter = responseBodyWriter.takeDatagramWriter()
+        let datagramWriter = await responseBodyWriter.takeDatagramWriter()
 
         if case .some = datagramWriter {
             Issue.record("Unexpectedly received a datagram writer.")
@@ -118,14 +123,20 @@ struct NIOHTTPServerWriterTests {
     @available(anyAppleOS 26.0, *)
     func takeDatagramWriterVendsResponseAndDatagramWriter() async throws {
         let (outboundWriter, sink) = NIOAsyncChannelOutboundWriter<HTTPResponsePart>.makeTestingWriter()
+        let connectionChannel = EmbeddedChannel()
+        let datagramStreamPromise = connectionChannel.eventLoop.makePromise(of: HTTP3UnreliableDatagramStream.self)
         let sender = NIOHTTPServer.ResponseSender(
             writer: outboundWriter,
             writerState: .init(),
-            datagramWriter: NIOHTTPServer.DatagramWriter()
+            datagramStreamFuture: datagramStreamPromise.futureResult
+        )
+
+        datagramStreamPromise.succeed(
+            HTTP3UnreliableDatagramStream(streamID: 4, connectionChannel: connectionChannel, maxBufferedDatagrams: 16)
         )
 
         var responseBodyWriter = try await sender.send(.init(status: .ok))
-        let datagramWriter = responseBodyWriter.takeDatagramWriter()
+        let datagramWriter = await responseBodyWriter.takeDatagramWriter()
 
         var testBuffer = UniqueArray<UInt8>(repeating: 5, count: 10)
         try await responseBodyWriter.finish(buffer: &testBuffer)
@@ -135,11 +146,8 @@ struct NIOHTTPServerWriterTests {
             return
         }
 
-        // TODO: The underlying unreliable datagrams transport is not yet implemented.
-        await #expect(throws: DatagramsError.notImplemented) {
-            var emptyBuffer = UniqueArray<UInt8>()
-            try await datagramWriter.write(buffer: &emptyBuffer)
-        }
+        var datagramBuffer = UniqueArray<UInt8>(copying: [1])
+        try await datagramWriter.write(buffer: &datagramBuffer)
 
         var responseIterator = sink.makeAsyncIterator()
         let head = try #require(await responseIterator.next())
@@ -149,6 +157,10 @@ struct NIOHTTPServerWriterTests {
         #expect(head == .head(.init(status: .ok)))
         #expect(body == .body(.init(repeating: 5, count: 10)))
         #expect(end == .end(nil))
+
+        let firstDatagram = try connectionChannel.readOutbound(as: HTTP3Datagram.self)
+        #expect(firstDatagram?.streamID == 4)
+        #expect(firstDatagram?.payload == ByteBuffer([1]))
     }
     #endif  // HTTP3 && UnstableHTTPDatagrams
 }

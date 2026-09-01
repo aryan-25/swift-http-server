@@ -388,6 +388,10 @@ struct NIOHTTPServerSwiftConfigurationTests {
                 "quicConfiguration.qlog.path": "/tmp/qlog",
                 "quicConfiguration.qlog.topic": "topic",
                 "quicConfiguration.qlog.description": "description",
+                "datagramConfiguration.datagramsEnabled": true,
+                "datagramConfiguration.maxDatagramFrameSize": 1200,
+                "datagramConfiguration.maxBufferedDatagramBytes": 12000,
+                "datagramConfiguration.maxBufferedStreamDatagrams": 12,
             ])
             let snapshot = ConfigReader(provider: provider).snapshot()
 
@@ -399,6 +403,13 @@ struct NIOHTTPServerSwiftConfigurationTests {
             #expect(connectionSettings.qpackMaximumTableCapacity == 4096)
             #expect(connectionSettings.qpackBlockedStreams == 16)
             #expect(connectionSettings.maximumFieldSectionSize == 8192)
+
+            #if UnstableHTTPDatagrams
+            let datagramConfiguration = try #require(http3.datagramConfiguration)
+            #expect(datagramConfiguration.maxDatagramFrameSize == 1200)
+            #expect(datagramConfiguration.maxBufferedDatagramBytes == 12000)
+            #expect(datagramConfiguration.maxBufferedStreamDatagrams == 12)
+            #endif
 
             let quic = http3.quicConfiguration
             #expect(quic.keyExchangeGroup == .secp384)
@@ -466,6 +477,69 @@ struct NIOHTTPServerSwiftConfigurationTests {
                 #expect(settings.maximumFieldSectionSize == nil)
             }
         }
+
+        #if UnstableHTTPDatagrams
+        @Suite("DatagramConfiguration")
+        struct DatagramConfigurationTests {
+            @Test("Default values")
+            @available(anyAppleOS 26.0, *)
+            func defaultValues() throws {
+                let snapshot = ConfigReader(provider: InMemoryProvider(values: [:])).snapshot()
+
+                let datagramConfiguration = NIOHTTPServerConfiguration.HTTP3.DatagramConfiguration(config: snapshot)
+
+                #expect(datagramConfiguration == .defaults)
+            }
+
+            @Test("Custom values")
+            @available(anyAppleOS 26.0, *)
+            func customValues() throws {
+                let snapshot = ConfigReader(
+                    provider: InMemoryProvider(values: [
+                        "datagramsEnabled": true,
+                        "maxDatagramFrameSize": 1200,
+                        "maxBufferedDatagramBytes": 12000,
+                        "maxBufferedStreamDatagrams": 12,
+                    ])
+                ).snapshot()
+
+                let config = try #require(NIOHTTPServerConfiguration.HTTP3.DatagramConfiguration(config: snapshot))
+                #expect(config.maxDatagramFrameSize == 1200)
+                #expect(config.maxBufferedDatagramBytes == 12000)
+                #expect(config.maxBufferedStreamDatagrams == 12)
+            }
+
+            @Test("Datagrams configuration `nil` when `datagramsEnabled` set to false")
+            @available(anyAppleOS 26.0, *)
+            func configNilWhenDatagramsEnabledSetToFalse() throws {
+                let snapshot = ConfigReader(
+                    provider: InMemoryProvider(values: [
+                        "datagramsEnabled": false
+                    ])
+                ).snapshot()
+
+                #expect(NIOHTTPServerConfiguration.HTTP3.DatagramConfiguration(config: snapshot) == nil)
+            }
+
+            @Test("Maximum frame size must not be set to 0 when datagrams enabled")
+            @available(anyAppleOS 26.0, *)
+            func frameSizeMustNotBeZeroWhenDatagramsEnabled() async throws {
+                await #expect(processExitsWith: .failure) {
+                    // Setting `maxDatagramFrameSize` to 0 means that the QUIC layer will not advertise support for
+                    // receiving datagrams. If users intend to disable receiving datagrams, then `datagramsEnabled`
+                    // should be set to `false`.
+                    let snapshot = ConfigReader(
+                        provider: InMemoryProvider(values: [
+                            "datagramsEnabled": true,
+                            "maxDatagramFrameSize": 0,
+                        ])
+                    ).snapshot()
+
+                    _ = NIOHTTPServerConfiguration.HTTP3.DatagramConfiguration(config: snapshot)
+                }
+            }
+        }
+        #endif  // UnstableHTTPDatagrams
 
         @Suite("QUICConfiguration")
         struct QUICConfigurationTests {
