@@ -39,8 +39,8 @@ extension StreamResetTestError: HTTPServerHTTP2StreamResetErrorConvertible {
 
 #if HTTP3
 extension StreamResetTestError: HTTPServerHTTP3StreamResetErrorConvertible {
-    var http3StreamResetCode: UInt64 { HTTP3ErrorCode.connectError.rawValue }
-    var http3StopSendingCode: UInt64 { HTTP3ErrorCode.connectError.rawValue }
+    var http3StreamResetCode: UInt64 { HTTPTypes.HTTP3ErrorCode.connectError.rawValue }
+    var http3StopSendingCode: UInt64 { HTTPTypes.HTTP3ErrorCode.connectError.rawValue }
 }
 #endif
 
@@ -336,7 +336,7 @@ struct NIOHTTPServerStreamResetTests {
         )
         channel.embeddedEventLoop.run()
 
-        let expectedCode = QUICApplicationErrorCode(HTTP3ErrorCode.internalError.rawValue)
+        let expectedCode = QUICApplicationErrorCode(HTTPTypes.HTTP3ErrorCode.internalError.rawValue)
         #expect(recorder.events.compactMap { $0 as? QUICResetStreamEvent }.first?.code == expectedCode)
         #expect(recorder.events.compactMap { $0 as? QUICStopSendingEvent }.first?.code == expectedCode)
 
