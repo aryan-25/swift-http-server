@@ -195,7 +195,7 @@ struct NIOHTTPServerStreamResetTests {
     @available(anyAppleOS 26.0, *)
     private func assertHTTP2Reset(
         throwing error: any Error,
-        expectedCode: HTTP2ErrorCode,
+        expectedCode: NIOHTTP2.HTTP2ErrorCode,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
         let (server, clientConfiguration) = try TestHelpers.makeServerAndClientConfiguration(
@@ -221,7 +221,7 @@ struct NIOHTTPServerStreamResetTests {
                 ]
                 try await outbound.write(.headers(.init(headers: requestHeaders, endStream: true)))
 
-                var observedCode: HTTP2ErrorCode?
+                var observedCode: NIOHTTP2.HTTP2ErrorCode?
                 for try await payload in inbound {
                     if case .rstStream(let code) = payload {
                         observedCode = code
@@ -267,7 +267,7 @@ struct NIOHTTPServerStreamResetTests {
                 try await outbound.write(.headers(.init(headers: requestHeaders, endStream: true)))
 
                 var sawResponseHeaders = false
-                var resetCode: HTTP2ErrorCode?
+                var resetCode: NIOHTTP2.HTTP2ErrorCode?
                 for try await payload in inbound {
                     switch payload {
                     case .headers:
