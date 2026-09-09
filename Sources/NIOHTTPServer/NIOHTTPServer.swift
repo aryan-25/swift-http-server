@@ -545,6 +545,9 @@ extension NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator {
 
 @available(anyAppleOS 26.0, *)
 extension ServerBootstrap {
+    /// Makes a `ServerBootstrap` alongside the `ServerQuiescingHelper` used to later shut that listener down gracefully.
+    ///
+    /// - Note: A `ConnectionLimitHandler` is only installed when `maxConnections` is non-`nil`.
     static func makeHTTPServerBootstrap(
         group: any EventLoopGroup,
         maxConnections: Int?
@@ -573,6 +576,7 @@ extension ServerBootstrap {
 
 @available(anyAppleOS 26.0, *)
 extension NIOHTTPServer {
+    /// Awaits the next address from `iterator`.
     func nextBoundAddress(
         from iterator: inout sending AsyncThrowingStream<NIOCore.SocketAddress, any Error>.AsyncIterator
     ) async throws -> NIOCore.SocketAddress {
@@ -582,6 +586,11 @@ extension NIOHTTPServer {
         return address
     }
 
+    /// Provides a TCP listening channel bound to `address`. The underlying socket is closed when either returning or
+    /// throwing from the `body` closure.
+    ///
+    /// - Note: The bind address is yielded to the provided `addressContinuation` immediately after the TCP socket has
+    ///   been bound.
     func withTCPChannel<Child: Sendable>(
         address: NIOCore.SocketAddress,
         addressContinuation: AsyncThrowingStream<NIOCore.SocketAddress, any Error>.Continuation,

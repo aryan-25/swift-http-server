@@ -137,7 +137,7 @@ extension NIOHTTPServer {
     /// Adds a child task to `group` that binds a QUIC listener at `address` on `eventLoop` and serves HTTP/3
     /// connections on it until the task is cancelled or the server shuts down gracefully.
     ///
-    /// - Note: The bind address is yielded to the provided `addressContinuation` immediately after the TCP socket has
+    /// - Note: The bind address is yielded to the provided `addressContinuation` immediately after the UDP socket has
     ///   been bound.
     func addHTTP3Listener<Handler: NIOHTTPServerConnectionHandler>(
         to group: inout ThrowingDiscardingTaskGroup<any Error>,
