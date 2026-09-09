@@ -230,6 +230,34 @@ extension NIOHTTPServer {
         }
     }
 
+    /// Adds a child task to `group` that binds a listener at `address` and serves connections on it until the task is
+    /// cancelled or the server shuts down gracefully. Each accepted connection negotiates HTTP/1.1 or HTTP/2 via ALPN.
+    ///
+    /// - Note: The bind address is yielded to the provided `addressContinuation` immediately after the TCP socket has
+    ///   been bound.
+    func addSecureUpgradeListener<Handler: NIOHTTPServerConnectionHandler>(
+        to group: inout ThrowingDiscardingTaskGroup<any Error>,
+        address: NIOCore.SocketAddress,
+        configuration: ListenerConfiguration.SecureUpgrade,
+        addressContinuation: AsyncThrowingStream<NIOCore.SocketAddress, any Error>.Continuation,
+        connectionHandler: Handler
+    ) {
+        group.addTask(name: "Secure Upgrade over \(address)") {
+            try await self.withTCPChannel(
+                address: address,
+                addressContinuation: addressContinuation,
+                childChannelInitializer: { channel in
+                    self.setupSecureUpgradeConnection(channel: channel, configuration: configuration)
+                }
+            ) { serverChannel in
+                try await self.serveSecureUpgrade(
+                    serverChannel: serverChannel,
+                    connectionHandler: connectionHandler
+                )
+            }
+        }
+    }
+
     private func setupHTTP2Connection(
         channel: any Channel,
         configuration: NIOHTTPServerConfiguration.HTTP2

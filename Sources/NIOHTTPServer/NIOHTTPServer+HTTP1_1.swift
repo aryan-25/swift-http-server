@@ -111,6 +111,30 @@ extension NIOHTTPServer {
         }
     }
 
+    /// Adds a child task to `group` that binds a plaintext HTTP/1.1 listener at `address` and serves connections on it
+    /// until the task is cancelled or the server shuts down gracefully.
+    ///
+    /// - Note: The bind address is yielded to the provided `addressContinuation` immediately after the TCP socket has
+    ///   been bound.
+    func addPlaintextHTTP1_1Listener<Handler: NIOHTTPServerConnectionHandler>(
+        to group: inout ThrowingDiscardingTaskGroup<any Error>,
+        address: NIOCore.SocketAddress,
+        addressContinuation: AsyncThrowingStream<NIOCore.SocketAddress, any Error>.Continuation,
+        connectionHandler: Handler
+    ) {
+        group.addTask(name: "Plaintext HTTP/1.1 over \(address)") {
+            try await self.withTCPChannel(
+                address: address,
+                addressContinuation: addressContinuation,
+                childChannelInitializer: { channel in
+                    self.setupHTTP1_1Connection(channel: channel, isSecure: false)
+                }
+            ) { serverChannel in
+                try await self.serveInsecureHTTP1_1(serverChannel: serverChannel, connectionHandler: connectionHandler)
+            }
+        }
+    }
+
     /// Configures the HTTP/1.1 server pipeline and the keep-alive handler.
     func setupHTTP1_1Connection(
         channel: any Channel,

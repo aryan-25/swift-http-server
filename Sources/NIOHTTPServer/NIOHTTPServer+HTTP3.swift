@@ -134,6 +134,36 @@ extension NIOHTTPServer {
         }
     }
 
+    /// Adds a child task to `group` that binds a QUIC listener at `address` on `eventLoop` and serves HTTP/3
+    /// connections on it until the task is cancelled or the server shuts down gracefully.
+    ///
+    /// - Note: The bind address is yielded to the provided `addressContinuation` immediately after the TCP socket has
+    ///   been bound.
+    func addHTTP3Listener<Handler: NIOHTTPServerConnectionHandler>(
+        to group: inout ThrowingDiscardingTaskGroup<any Error>,
+        address: NIOCore.SocketAddress,
+        eventLoop: any EventLoop,
+        configuration: ListenerConfiguration.HTTP3,
+        addressContinuation: AsyncThrowingStream<NIOCore.SocketAddress, any Error>.Continuation,
+        connectionHandler: Handler
+    ) {
+        let eventLoopExecutor = eventLoop.executor as? any TaskExecutor
+
+        group.addTask(name: "HTTP/3 over \(address) on \(eventLoop)", executorPreference: eventLoopExecutor) {
+            try await self.withHTTP3Channel(
+                address: address,
+                eventLoop: eventLoop,
+                configuration: configuration,
+                addressContinuation: addressContinuation
+            ) { _, multiplexer in
+                await self.serveHTTP3(
+                    connectionMultiplexer: multiplexer,
+                    connectionHandler: connectionHandler
+                )
+            }
+        }
+    }
+
     /// Provides a configured HTTP/3 channel and the associated connection multiplexer. The underlying socket is closed
     /// when either returning or throwing from the `body` closure.
     func withHTTP3Channel(

@@ -187,7 +187,7 @@ public struct NIOHTTPServer: HTTPServer {
         // binding succeeded, the serve loop returned normally, or an error propagated.
         defer { self.finishListeningAddressPromise() }
 
-        try await withThrowingTaskGroup { group in
+        try await withThrowingDiscardingTaskGroup { group in
             let listenerConfiguration = self.configuration.makeListenerConfiguration()
 
             let (addressStream, addressContinuation) = AsyncThrowingStream.makeStream(of: NIOCore.SocketAddress.self)
@@ -198,108 +198,62 @@ public struct NIOHTTPServer: HTTPServer {
             for bindTarget in self.configuration.bindTargets {
                 switch listenerConfiguration {
                 case .plaintextHTTP1_1:
-                    group.addTask(name: "Plaintext HTTP/1.1 over \(bindTarget.description)") {
-                        try await self.withTCPChannel(
-                            address: NIOCore.SocketAddress(bindTarget: bindTarget),
-                            addressContinuation: addressContinuation,
-                            childChannelInitializer: { channel in
-                                self.setupHTTP1_1Connection(channel: channel, isSecure: false)
-                            }
-                        ) { serverChannel in
-                            try await self.serveInsecureHTTP1_1(
-                                serverChannel: serverChannel,
-                                connectionHandler: connectionHandler
-                            )
-                        }
-                    }
+                    self.addPlaintextHTTP1_1Listener(
+                        to: &group,
+                        address: try NIOCore.SocketAddress(bindTarget: bindTarget),
+                        addressContinuation: addressContinuation,
+                        connectionHandler: connectionHandler
+                    )
 
                     let resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
                     boundAddresses.append(resolvedAddress)
 
                 case .secureUpgrade(let configuration):
-                    group.addTask(name: "Secure Upgrade over \(bindTarget.description)") {
-                        try await self.withTCPChannel(
-                            address: NIOCore.SocketAddress(bindTarget: bindTarget),
-                            addressContinuation: addressContinuation,
-                            childChannelInitializer: { channel in
-                                self.setupSecureUpgradeConnection(channel: channel, configuration: configuration)
-                            }
-                        ) { serverChannel in
-                            try await self.serveSecureUpgrade(
-                                serverChannel: serverChannel,
-                                connectionHandler: connectionHandler
-                            )
-                        }
-                    }
+                    self.addSecureUpgradeListener(
+                        to: &group,
+                        address: try NIOCore.SocketAddress(bindTarget: bindTarget),
+                        configuration: configuration,
+                        addressContinuation: addressContinuation,
+                        connectionHandler: connectionHandler
+                    )
 
                     let resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
                     boundAddresses.append(resolvedAddress)
 
                 #if HTTP3
                 case .http3(let configuration):
-                    let eventLoop = self.eventLoopGroup.next()
-                    let eventLoopExecutor = eventLoop.executor as? any TaskExecutor
-
-                    group.addTask(
-                        name: "HTTP/3 over \(bindTarget.description) on \(eventLoop.description)",
-                        executorPreference: eventLoopExecutor
-                    ) {
-                        try await self.withHTTP3Channel(
-                            address: NIOCore.SocketAddress(bindTarget: bindTarget),
-                            eventLoop: eventLoop,
-                            configuration: configuration,
-                            addressContinuation: addressContinuation
-                        ) { _, multiplexer in
-                            await self.serveHTTP3(
-                                connectionMultiplexer: multiplexer,
-                                connectionHandler: connectionHandler
-                            )
-                        }
-                    }
+                    self.addHTTP3Listener(
+                        to: &group,
+                        address: try NIOCore.SocketAddress(bindTarget: bindTarget),
+                        eventLoop: self.eventLoopGroup.next(),
+                        configuration: configuration,
+                        addressContinuation: addressContinuation,
+                        connectionHandler: connectionHandler
+                    )
 
                     let resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
                     boundAddresses.append(resolvedAddress)
 
                 case .secureUpgradeAndHTTP3(let secureUpgradeConfiguration, let http3Configuration):
-                    group.addTask(name: "Secure Upgrade over \(bindTarget.description)") {
-                        try await self.withTCPChannel(
-                            address: NIOCore.SocketAddress(bindTarget: bindTarget),
-                            addressContinuation: addressContinuation,
-                            childChannelInitializer: { channel in
-                                self.setupSecureUpgradeConnection(
-                                    channel: channel,
-                                    configuration: secureUpgradeConfiguration
-                                )
-                            }
-                        ) { serverChannel in
-                            try await self.serveSecureUpgrade(
-                                serverChannel: serverChannel,
-                                connectionHandler: connectionHandler
-                            )
-                        }
-                    }
+                    self.addSecureUpgradeListener(
+                        to: &group,
+                        address: try NIOCore.SocketAddress(bindTarget: bindTarget),
+                        configuration: secureUpgradeConfiguration,
+                        addressContinuation: addressContinuation,
+                        connectionHandler: connectionHandler
+                    )
 
+                    // Wait for the address the TCP channel bound to, and use the same address to bind the UDP channel.
                     let resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
 
-                    let eventLoop = self.eventLoopGroup.next()
-                    let eventLoopExecutor = eventLoop.executor as? any TaskExecutor
-
-                    group.addTask(
-                        name: "HTTP/3 over \(bindTarget.description) on \(eventLoop.description)",
-                        executorPreference: eventLoopExecutor
-                    ) {
-                        try await self.withHTTP3Channel(
-                            address: resolvedAddress,
-                            eventLoop: eventLoop,
-                            configuration: http3Configuration,
-                            addressContinuation: addressContinuation
-                        ) { _, multiplexer in
-                            await self.serveHTTP3(
-                                connectionMultiplexer: multiplexer,
-                                connectionHandler: connectionHandler
-                            )
-                        }
-                    }
+                    self.addHTTP3Listener(
+                        to: &group,
+                        address: resolvedAddress,
+                        eventLoop: self.eventLoopGroup.next(),
+                        configuration: http3Configuration,
+                        addressContinuation: addressContinuation,
+                        connectionHandler: connectionHandler
+                    )
 
                     _ = try await self.nextBoundAddress(from: &addressStreamIterator)
                     boundAddresses.append(resolvedAddress)
@@ -308,8 +262,6 @@ public struct NIOHTTPServer: HTTPServer {
             }
 
             try self.addressesBound(boundAddresses)
-
-            try await group.waitForAll()
         }
     }
 
