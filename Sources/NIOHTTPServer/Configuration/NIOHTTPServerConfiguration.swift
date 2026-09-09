@@ -51,6 +51,13 @@ public struct NIOHTTPServerConfiguration: Sendable {
         public static func hostAndPort(host: String, port: Int) -> Self {
             Self(backing: .hostAndPort(host: host, port: port))
         }
+
+        var description: String {
+            switch self.backing {
+            case .hostAndPort(let host, let port):
+                return "\(host):\(port)"
+            }
+        }
     }
 
     /// Configuration for transport security settings.

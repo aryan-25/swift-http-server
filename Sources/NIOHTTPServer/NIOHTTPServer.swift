@@ -31,6 +31,11 @@ import SwiftASN1
 import Synchronization
 import X509
 
+#if HTTP3
+import NIOQUIC
+@_spi(HTTP3AsyncInterface) import NIOHTTP3
+#endif
+
 /// A generic HTTP server that can handle incoming HTTP requests.
 ///
 /// `NIOHTTPServer` provides a high-level interface for creating HTTP servers with support for:
@@ -177,24 +182,134 @@ public struct NIOHTTPServer: HTTPServer {
     /// - Parameter connectionHandler: An ``NIOHTTPServerConnectionHandler``
     ///   implementation that drives the request loop on each accepted
     ///   connection.
-    public func serve<Handler: NIOHTTPServerConnectionHandler>(
-        connectionHandler: Handler
-    ) async throws {
+    public func serve<Handler: NIOHTTPServerConnectionHandler>(connectionHandler: Handler) async throws {
         // Ensure the listening address promise is always completed on the way out, regardless of whether
         // binding succeeded, the serve loop returned normally, or an error propagated.
         defer { self.finishListeningAddressPromise() }
 
-        let serverChannels = try await self.makeServerChannels()
+        try await withThrowingTaskGroup { group in
+            let listenerConfiguration = self.configuration.makeListenerConfiguration()
 
-        return try await withTaskCancellationHandler {
-            try await withGracefulShutdownHandler {
-                try await self._serve(serverChannels: serverChannels, connectionHandler: connectionHandler)
-            } onGracefulShutdown: {
-                self.beginGracefulShutdown(serverChannels: serverChannels)
+            let (addressStream, addressContinuation) = AsyncThrowingStream.makeStream(of: NIOCore.SocketAddress.self)
+            var addressStreamIterator = addressStream.makeAsyncIterator()
+
+            var boundAddresses = [NIOCore.SocketAddress]()
+
+            for bindTarget in self.configuration.bindTargets {
+                switch listenerConfiguration {
+                case .plaintextHTTP1_1:
+                    group.addTask(name: "Plaintext HTTP/1.1 over \(bindTarget.description)") {
+                        try await self.withTCPChannel(
+                            address: NIOCore.SocketAddress(bindTarget: bindTarget),
+                            addressContinuation: addressContinuation,
+                            childChannelInitializer: { channel in
+                                self.setupHTTP1_1Connection(channel: channel, isSecure: false)
+                            }
+                        ) { serverChannel in
+                            try await self.serveInsecureHTTP1_1(
+                                serverChannel: serverChannel,
+                                connectionHandler: connectionHandler
+                            )
+                        }
+                    }
+
+                    let resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
+                    boundAddresses.append(resolvedAddress)
+
+                case .secureUpgrade(let configuration):
+                    group.addTask(name: "Secure Upgrade over \(bindTarget.description)") {
+                        try await self.withTCPChannel(
+                            address: NIOCore.SocketAddress(bindTarget: bindTarget),
+                            addressContinuation: addressContinuation,
+                            childChannelInitializer: { channel in
+                                self.setupSecureUpgradeConnection(channel: channel, configuration: configuration)
+                            }
+                        ) { serverChannel in
+                            try await self.serveSecureUpgrade(
+                                serverChannel: serverChannel,
+                                connectionHandler: connectionHandler
+                            )
+                        }
+                    }
+
+                    let resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
+                    boundAddresses.append(resolvedAddress)
+
+                #if HTTP3
+                case .http3(let configuration):
+                    let eventLoop = self.eventLoopGroup.next()
+                    let eventLoopExecutor = eventLoop.executor as? any TaskExecutor
+
+                    group.addTask(
+                        name: "HTTP/3 over \(bindTarget.description) on \(eventLoop.description)",
+                        executorPreference: eventLoopExecutor
+                    ) {
+                        try await self.withHTTP3Channel(
+                            address: NIOCore.SocketAddress(bindTarget: bindTarget),
+                            eventLoop: eventLoop,
+                            configuration: configuration,
+                            addressContinuation: addressContinuation
+                        ) { _, multiplexer in
+                            await self.serveHTTP3(
+                                connectionMultiplexer: multiplexer,
+                                connectionHandler: connectionHandler
+                            )
+                        }
+                    }
+
+                    let resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
+                    boundAddresses.append(resolvedAddress)
+
+                case .secureUpgradeAndHTTP3(let secureUpgradeConfiguration, let http3Configuration):
+                    group.addTask(name: "Secure Upgrade over \(bindTarget.description)") {
+                        try await self.withTCPChannel(
+                            address: NIOCore.SocketAddress(bindTarget: bindTarget),
+                            addressContinuation: addressContinuation,
+                            childChannelInitializer: { channel in
+                                self.setupSecureUpgradeConnection(
+                                    channel: channel,
+                                    configuration: secureUpgradeConfiguration
+                                )
+                            }
+                        ) { serverChannel in
+                            try await self.serveSecureUpgrade(
+                                serverChannel: serverChannel,
+                                connectionHandler: connectionHandler
+                            )
+                        }
+                    }
+
+                    let resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
+
+                    let eventLoop = self.eventLoopGroup.next()
+                    let eventLoopExecutor = eventLoop.executor as? any TaskExecutor
+
+                    group.addTask(
+                        name: "HTTP/3 over \(bindTarget.description) on \(eventLoop.description)",
+                        executorPreference: eventLoopExecutor
+                    ) {
+                        try await self.withHTTP3Channel(
+                            address: resolvedAddress,
+                            eventLoop: eventLoop,
+                            configuration: http3Configuration,
+                            addressContinuation: addressContinuation
+                        ) { _, multiplexer in
+                            await self.serveHTTP3(
+                                connectionMultiplexer: multiplexer,
+                                connectionHandler: connectionHandler
+                            )
+                        }
+                    }
+
+                    _ = try await self.nextBoundAddress(from: &addressStreamIterator)
+                    boundAddresses.append(resolvedAddress)
+                #endif  // HTTP3
+                }
             }
-        } onCancel: {
-            // Forcefully close down the server channels
-            self.close(serverChannels: serverChannels)
+
+            try self.addressesBound(boundAddresses)
+
+            try await group.waitForAll()
         }
     }
 
@@ -222,104 +337,6 @@ public struct NIOHTTPServer: HTTPServer {
         try await self.serve(
             connectionHandler: NIOHTTPServerClosureConnectionHandler(body: connectionHandler)
         )
-    }
-
-    /// Creates and returns server channels based on the configured transport security.
-    func makeServerChannels() async throws -> [ServerChannel] {
-        var serverChannels = [ServerChannel]()
-        var secureUpgradeBindTargets = self.configuration.bindTargets
-
-        #if HTTP3
-        if let http3Configuration = self.configuration.supportedHTTPVersions.http3ConfigIfSupported,
-            let authenticationConfiguration = self.configuration.quicAuthenticationConfiguration
-        {
-            let http3Channels = try await self.setupHTTP3ServerChannels(
-                bindTargets: self.configuration.bindTargets,
-                http3Configuration: http3Configuration,
-                authenticationConfiguration: authenticationConfiguration,
-                authenticator: self.configuration.quicAuthenticator
-            )
-            serverChannels.append(
-                contentsOf: http3Channels.map { (quicChannel, mux) in
-                    .http3(quicChannel: quicChannel, connectionMultiplexer: mux)
-                }
-            )
-
-            if self.configuration.sslContext == nil {
-                // `supportedHTTPVersions == [.http3]` here. We therefore just return HTTP/3 channel(s).
-                try self.addressesBound(http3Channels.map { (channel, _) in channel.localAddress })
-                return serverChannels
-            }
-
-            // We also need to set up secure upgrade channel(s) on the same port.
-            secureUpgradeBindTargets = try http3Channels.map { (http3Channel, _) in
-                try NIOHTTPServerConfiguration.BindTarget(http3Channel.localAddress)
-            }
-        }
-        #endif  // HTTP3
-
-        guard let sslContext = self.configuration.sslContext else {
-            // Set up plaintext HTTP/1.1 channel(s).
-            let http1Channels = try await self.setupHTTP1_1ServerChannels(bindTargets: secureUpgradeBindTargets)
-            try self.addressesBound(http1Channels.map { (channel, _) in channel.channel.localAddress })
-            return http1Channels.map { .plaintextHTTP1_1(channel: $0, quiescingHelper: $1) }
-        }
-
-        let secureUpgradeChannels = try await self.setupSecureUpgradeServerChannels(
-            bindTargets: secureUpgradeBindTargets,
-            http2Configuration: self.configuration.supportedHTTPVersions.http2ConfigIfSupported,
-            sslContext: sslContext
-        )
-        try self.addressesBound(secureUpgradeChannels.map { (channel, _) in channel.channel.localAddress })
-
-        serverChannels.append(
-            contentsOf: secureUpgradeChannels.map { (channel, quiescingHelper) in
-                .secureUpgrade(channel: channel, quiescingHelper: quiescingHelper)
-            }
-        )
-
-        return serverChannels
-    }
-
-    private func _serve<Handler: NIOHTTPServerConnectionHandler>(
-        serverChannels: [ServerChannel],
-        connectionHandler: Handler
-    ) async throws {
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            for serverChannel in serverChannels {
-                group.addTask {
-                    switch serverChannel {
-                    case .plaintextHTTP1_1(let http1Channel, _):
-                        try await self.serveInsecureHTTP1_1(
-                            serverChannel: http1Channel,
-                            connectionHandler: connectionHandler
-                        )
-
-                    case .secureUpgrade(let secureUpgradeChannel, _):
-                        try await self.serveSecureUpgrade(
-                            serverChannel: secureUpgradeChannel,
-                            connectionHandler: connectionHandler
-                        )
-
-                    #if HTTP3
-                    case .http3(_, let connectionMultiplexer):
-                        await self.serveHTTP3(
-                            connectionMultiplexer: connectionMultiplexer,
-                            connectionHandler: connectionHandler
-                        )
-                    #endif
-                    }
-                }
-            }
-
-            // If an error occurs in any channel, bring down all other channels too and propagate the error.
-            do {
-                for try await _ in group {}
-            } catch {
-                // Propagate the error. This will cancel the entire group.
-                throw error
-            }
-        }
     }
 
     /// Shared core: invokes the request handler with the appropriate reader/writer state.
@@ -454,55 +471,6 @@ public struct NIOHTTPServer: HTTPServer {
             ()
         }
     }
-
-    /// Initiates a graceful shutdown, allowing existing connections to drain before closing. How graceful shutdown is
-    /// signalled depends on the protocol:
-    ///
-    /// For HTTP/1.1 and HTTP/2, `ServerQuiescingHelper` is added to the server channel pipeline. For each accepted
-    /// connection, `ServerQuiescingHelper` stores the associated connection child channel. When `initiateShutdown` is
-    /// called, `ServerQuiescingHelper` closes the server's socket to stop accepting any new connections, then fires
-    /// `ChannelShouldQuiesceEvent` on each stored child channel.
-    ///
-    /// For HTTP/3, `ServerQuiescingHelper` cannot be used as QUIC connections are multiplexed internally by
-    /// `QUICHandler`. We instead fire `ChannelShouldQuiesceEvent` directly on the QUIC channel. `QUICHandler` reacts to
-    /// it by propagating the event to each QUIC connection channel. This eventually reaches `HTTP3ConnectionHandler`,
-    /// which performs the two-phase GOAWAY shutdown sequence.
-    private func beginGracefulShutdown(serverChannels: [ServerChannel]) {
-        self.finishListeningAddressPromise()
-
-        for serverChannel in serverChannels {
-            switch serverChannel {
-            case .plaintextHTTP1_1(_, let quiescingHelper), .secureUpgrade(_, let quiescingHelper):
-                quiescingHelper.initiateShutdown(promise: nil)
-
-            #if HTTP3
-            case .http3(let quicChannel, _):
-                // Fire ChannelShouldQuiesceEvent directly on the QUIC channel.
-                quicChannel.pipeline.fireUserInboundEventTriggered(ChannelShouldQuiesceEvent())
-            #endif
-            }
-        }
-    }
-
-    /// Forcefully closes the server channels without waiting for existing connections to drain.
-    func close(serverChannels: [ServerChannel]) {
-        self.finishListeningAddressPromise()
-
-        for serverChannel in serverChannels {
-            switch serverChannel {
-            case .plaintextHTTP1_1(let http1Channel, _):
-                http1Channel.channel.close(promise: nil)
-
-            case .secureUpgrade(let secureUpgradeChannel, _):
-                secureUpgradeChannel.channel.close(promise: nil)
-
-            #if HTTP3
-            case .http3(let quicChannel, _):
-                quicChannel.close(promise: nil)
-            #endif
-            }
-        }
-    }
 }
 
 @available(anyAppleOS 26.0, *)
@@ -619,6 +587,99 @@ extension NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator {
                 logger.trace("No more request parts on connection")
                 return nil
             }
+        }
+    }
+}
+
+@available(anyAppleOS 26.0, *)
+extension ServerBootstrap {
+    static func makeHTTPServerBootstrap(
+        group: any EventLoopGroup,
+        maxConnections: Int?
+    ) -> (ServerBootstrap, ServerQuiescingHelper) {
+        let serverQuiescingHelper = ServerQuiescingHelper(group: group)
+
+        let bootstrap = ServerBootstrap(group: group)
+            .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
+            .serverChannelInitializer { channel in
+                channel.eventLoop.makeCompletedFuture {
+                    try channel.pipeline.syncOperations.addHandler(
+                        serverQuiescingHelper.makeServerChannelHandler(channel: channel)
+                    )
+
+                    if let maxConnections {
+                        try channel.pipeline.syncOperations.addHandler(
+                            ConnectionLimitHandler(maxConnections: maxConnections)
+                        )
+                    }
+                }
+            }
+
+        return (bootstrap, serverQuiescingHelper)
+    }
+}
+
+@available(anyAppleOS 26.0, *)
+extension NIOHTTPServer {
+    func nextBoundAddress(
+        from iterator: inout sending AsyncThrowingStream<NIOCore.SocketAddress, any Error>.AsyncIterator
+    ) async throws -> NIOCore.SocketAddress {
+        guard let address = try await iterator.next() else {
+            throw ListeningAddressError.addressOrPortNotAvailable
+        }
+        return address
+    }
+
+    func withTCPChannel<Child: Sendable>(
+        address: NIOCore.SocketAddress,
+        addressContinuation: AsyncThrowingStream<NIOCore.SocketAddress, any Error>.Continuation,
+        childChannelInitializer: @escaping @Sendable (any Channel) -> EventLoopFuture<Child>,
+        _ body: (NIOAsyncChannel<Child, Never>) async throws -> Void
+    ) async throws {
+        let (bootstrap, serverQuiescingHelper) = ServerBootstrap.makeHTTPServerBootstrap(
+            group: self.eventLoopGroup,
+            maxConnections: self.configuration.maxConnections
+        )
+
+        let serverChannel: NIOAsyncChannel<Child, Never>
+        do {
+            serverChannel = try await bootstrap.bind(to: address) { channel in
+                childChannelInitializer(channel)
+            }
+        } catch {
+            addressContinuation.finish(throwing: error)
+            throw error
+        }
+
+        try await withTaskCancellationHandler {
+            try await withGracefulShutdownHandler {
+                if Task.isCancelled || Task.isShuttingDownGracefully {
+                    // The cancellation/shutdown handler will have cleaned up the socket. Just return here.
+                    return
+                }
+
+                guard let localAddress = serverChannel.channel.localAddress else {
+                    addressContinuation.finish(throwing: ListeningAddressError.addressOrPortNotAvailable)
+                    throw ListeningAddressError.addressOrPortNotAvailable
+                }
+
+                addressContinuation.yield(localAddress)
+
+                do {
+                    try await body(serverChannel)
+                } catch {
+                    try? await serverChannel.executeThenClose { _ in }
+                    throw error
+                }
+
+                try? await serverChannel.executeThenClose { _ in }
+            } onGracefulShutdown: {
+                addressContinuation.finish(throwing: ListeningAddressError.serverClosed)
+                serverQuiescingHelper.initiateShutdown(promise: nil)
+            }
+        } onCancel: {
+            addressContinuation.finish(throwing: ListeningAddressError.serverClosed)
+            serverChannel.channel.close(promise: nil)
         }
     }
 }

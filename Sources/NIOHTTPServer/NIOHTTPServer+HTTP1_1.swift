@@ -111,66 +111,9 @@ extension NIOHTTPServer {
         }
     }
 
-    func setupHTTP1_1ServerChannels(
-        bindTargets: [NIOHTTPServerConfiguration.BindTarget]
-    ) async throws -> [(
-        NIOAsyncChannel<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, Never>, ServerQuiescingHelper
-    )] {
-        let bootstrap = ServerBootstrap(group: self.eventLoopGroup)
-            .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
-
-        var serverChannels = [
-            (NIOAsyncChannel<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, Never>, ServerQuiescingHelper)
-        ]()
-
-        do {
-            for bindTarget in bindTargets {
-                switch bindTarget.backing {
-                case .hostAndPort(let host, let port):
-                    let serverQuiescingHelper = ServerQuiescingHelper(group: self.eventLoopGroup)
-
-                    let serverChannel = try await bootstrap.serverChannelInitializer { channel in
-                        channel.eventLoop.makeCompletedFuture {
-                            try channel.pipeline.syncOperations.addHandler(
-                                serverQuiescingHelper.makeServerChannelHandler(channel: channel)
-                            )
-
-                            if let maxConnections = self.configuration.maxConnections {
-                                try channel.pipeline.syncOperations.addHandler(
-                                    ConnectionLimitHandler(maxConnections: maxConnections)
-                                )
-                            }
-                        }
-                    }.bind(host: host, port: port) { channel in
-                        self.setupHTTP1_1Connection(
-                            channel: channel,
-                            asyncChannelConfiguration: .init(
-                                backPressureStrategy: .init(self.configuration.backpressureStrategy),
-                                isOutboundHalfClosureEnabled: true
-                            ),
-                            isSecure: false
-                        )
-                    }
-                    serverChannels.append((serverChannel, serverQuiescingHelper))
-                }
-            }
-        } catch {
-            // A later bind failed: close any channels we already bound to avoid leaking sockets.
-            // We await the closes so the sockets are fully released by the time we throw, giving the
-            // caller deterministic semantics: when `serve` throws, all cleanup is done.
-            for (serverChannel, _) in serverChannels {
-                try? await serverChannel.channel.close()
-            }
-            throw error
-        }
-
-        return serverChannels
-    }
-
     /// Configures the HTTP/1.1 server pipeline and the keep-alive handler.
     func setupHTTP1_1Connection(
         channel: any Channel,
-        asyncChannelConfiguration: NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>.Configuration,
         isSecure: Bool
     ) -> EventLoopFuture<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>> {
         channel.pipeline.configureHTTPServerPipeline().flatMapThrowing {
@@ -183,7 +126,10 @@ extension NIOHTTPServer {
 
             return try NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>(
                 wrappingChannelSynchronously: channel,
-                configuration: asyncChannelConfiguration
+                configuration: .init(
+                    backPressureStrategy: .init(self.configuration.backpressureStrategy),
+                    isOutboundHalfClosureEnabled: true
+                )
             )
         }
     }
