@@ -548,7 +548,7 @@ extension ServerBootstrap {
     /// Makes a `ServerBootstrap` alongside the `ServerQuiescingHelper` used to later shut that listener down gracefully.
     ///
     /// - Note: A `ConnectionLimitHandler` is only installed when `maxConnections` is non-`nil`.
-    static func makeHTTPServerBootstrap(
+    static func makeTCPBootstrap(
         group: any EventLoopGroup,
         maxConnections: Int?
     ) -> (ServerBootstrap, ServerQuiescingHelper) {
@@ -597,7 +597,7 @@ extension NIOHTTPServer {
         childChannelInitializer: @escaping @Sendable (any Channel) -> EventLoopFuture<Child>,
         _ body: (NIOAsyncChannel<Child, Never>) async throws -> Void
     ) async throws {
-        let (bootstrap, serverQuiescingHelper) = ServerBootstrap.makeHTTPServerBootstrap(
+        let (bootstrap, serverQuiescingHelper) = ServerBootstrap.makeTCPBootstrap(
             group: self.eventLoopGroup,
             maxConnections: self.configuration.maxConnections
         )
