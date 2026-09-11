@@ -196,6 +196,8 @@ public struct NIOHTTPServer: HTTPServer {
             var boundAddresses = [NIOCore.SocketAddress]()
 
             for bindTarget in self.configuration.bindTargets {
+                let resolvedAddress: NIOCore.SocketAddress
+
                 switch listenerConfiguration {
                 case .plaintextHTTP1_1:
                     self.addPlaintextHTTP1_1Listener(
@@ -205,8 +207,7 @@ public struct NIOHTTPServer: HTTPServer {
                         connectionHandler: connectionHandler
                     )
 
-                    let resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
-                    boundAddresses.append(resolvedAddress)
+                    resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
 
                 case .secureUpgrade(let configuration):
                     self.addSecureUpgradeListener(
@@ -217,8 +218,7 @@ public struct NIOHTTPServer: HTTPServer {
                         connectionHandler: connectionHandler
                     )
 
-                    let resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
-                    boundAddresses.append(resolvedAddress)
+                    resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
 
                 #if HTTP3
                 case .http3(let configuration):
@@ -231,8 +231,7 @@ public struct NIOHTTPServer: HTTPServer {
                         connectionHandler: connectionHandler
                     )
 
-                    let resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
-                    boundAddresses.append(resolvedAddress)
+                    resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
 
                 case .secureUpgradeAndHTTP3(let secureUpgradeConfiguration, let http3Configuration):
                     self.addSecureUpgradeListener(
@@ -244,7 +243,7 @@ public struct NIOHTTPServer: HTTPServer {
                     )
 
                     // Wait for the address the TCP channel bound to, and use the same address to bind the UDP channel.
-                    let resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
+                    resolvedAddress = try await self.nextBoundAddress(from: &addressStreamIterator)
 
                     self.addHTTP3Listener(
                         to: &group,
@@ -256,9 +255,10 @@ public struct NIOHTTPServer: HTTPServer {
                     )
 
                     _ = try await self.nextBoundAddress(from: &addressStreamIterator)
-                    boundAddresses.append(resolvedAddress)
                 #endif  // HTTP3
                 }
+
+                boundAddresses.append(resolvedAddress)
             }
 
             self.addressesBound(boundAddresses)
