@@ -261,7 +261,7 @@ public struct NIOHTTPServer: HTTPServer {
                 }
             }
 
-            try self.addressesBound(boundAddresses)
+            self.addressesBound(boundAddresses)
         }
     }
 
