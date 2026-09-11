@@ -195,7 +195,8 @@ extension NIOHTTPServer {
         try await withTaskCancellationHandler {
             try await withGracefulShutdownHandler {
                 if Task.isCancelled || Task.isShuttingDownGracefully {
-                    // The cancellation/shutdown handler will have cleaned up the socket. Just return here.
+                    // The cancellation/shutdown handler will have closed the socket. Just await the closeFuture here.
+                    try? await quicChannel.closeFuture.get()
                     return
                 }
 
