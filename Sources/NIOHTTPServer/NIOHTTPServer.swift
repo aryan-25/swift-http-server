@@ -604,9 +604,7 @@ extension NIOHTTPServer {
 
         let serverChannel: NIOAsyncChannel<Child, Never>
         do {
-            serverChannel = try await bootstrap.bind(to: address) { channel in
-                childChannelInitializer(channel)
-            }
+            serverChannel = try await bootstrap.bind(to: address, childChannelInitializer: childChannelInitializer)
         } catch {
             addressContinuation.finish(throwing: error)
             throw error
