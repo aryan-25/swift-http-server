@@ -29,40 +29,38 @@ extension NIOHTTPServer {
     /// the child tasks and do not affect other connections.
     ///
     /// - Parameters:
-    ///   - serverChannel: The async channel that produces incoming HTTP/1.1 connections.
+    ///   - connectionStream: The stream of incoming HTTP/1.1 connections.
     ///   - connectionHandler: The connection handler invoked for each accepted connection.
     ///
     /// - Throws: If an error occurs while iterating the incoming connection stream.
     func serveInsecureHTTP1_1<Handler: NIOHTTPServerConnectionHandler>(
-        serverChannel: NIOAsyncChannel<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>, Never>,
+        connectionStream: NIOAsyncChannelInboundStream<NIOAsyncChannel<HTTPRequestPart, HTTPResponsePart>>,
         connectionHandler: Handler
     ) async throws {
-        try await serverChannel.executeThenClose { inbound in
-            // We don't use a `withThrowingDiscardingTaskGroup` here because an error thrown from the body or a child
-            // task would immediately propagate upwards, cancelling all child tasks and bringing down the entire server.
-            // We instead use a non-throwing discarding task group so that errors in the body (e.g. from iterating
-            // `inbound`) must be caught and handled directly.
-            let inboundConnectionIterationError = await withDiscardingTaskGroup { group -> (any Error)? in
-                do {
-                    for try await requestChannel in inbound {
-                        group.addTask {
-                            await self.dispatchPlaintextHTTP1_1Connection(
-                                requestChannel: requestChannel,
-                                connectionHandler: connectionHandler
-                            )
-                        }
+        // We don't use a `withThrowingDiscardingTaskGroup` here because an error thrown from the body or a child
+        // task would immediately propagate upwards, cancelling all child tasks and bringing down the entire server.
+        // We instead use a non-throwing discarding task group so that errors in the body (e.g. from iterating
+        // `inbound`) must be caught and handled directly.
+        let inboundConnectionIterationError = await withDiscardingTaskGroup { group -> (any Error)? in
+            do {
+                for try await requestChannel in connectionStream {
+                    group.addTask {
+                        await self.dispatchPlaintextHTTP1_1Connection(
+                            requestChannel: requestChannel,
+                            connectionHandler: connectionHandler
+                        )
                     }
-
-                    return nil
-                } catch {
-                    return error
                 }
-            }
 
-            if let inboundConnectionIterationError {
-                // The error occurred while iterating the inbound connection stream
-                throw inboundConnectionIterationError
+                return nil
+            } catch {
+                return error
             }
+        }
+
+        if let inboundConnectionIterationError {
+            // The error occurred while iterating the inbound connection stream
+            throw inboundConnectionIterationError
         }
     }
 
@@ -129,8 +127,8 @@ extension NIOHTTPServer {
                 childChannelInitializer: { channel in
                     self.setupHTTP1_1Connection(channel: channel, isSecure: false)
                 }
-            ) { serverChannel in
-                try await self.serveInsecureHTTP1_1(serverChannel: serverChannel, connectionHandler: connectionHandler)
+            ) { inbound in
+                try await self.serveInsecureHTTP1_1(connectionStream: inbound, connectionHandler: connectionHandler)
             }
         }
     }

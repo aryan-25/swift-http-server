@@ -595,7 +595,7 @@ extension NIOHTTPServer {
         address: NIOCore.SocketAddress,
         addressContinuation: AsyncThrowingStream<NIOCore.SocketAddress, any Error>.Continuation,
         childChannelInitializer: @escaping @Sendable (any Channel) -> EventLoopFuture<Child>,
-        _ body: (NIOAsyncChannel<Child, Never>) async throws -> Void
+        _ body: (NIOAsyncChannelInboundStream<Child>) async throws -> Void
     ) async throws {
         let (bootstrap, serverQuiescingHelper) = ServerBootstrap.makeTCPBootstrap(
             group: self.eventLoopGroup,
@@ -625,14 +625,9 @@ extension NIOHTTPServer {
 
                 addressContinuation.yield(localAddress)
 
-                do {
-                    try await body(serverChannel)
-                } catch {
-                    try? await serverChannel.channel.close()
-                    throw error
+                try await serverChannel.executeThenClose { inboundConnectionStream in
+                    try await body(inboundConnectionStream)
                 }
-
-                try? await serverChannel.channel.close()
             } onGracefulShutdown: {
                 addressContinuation.finish(throwing: ListeningAddressError.serverClosed)
                 serverQuiescingHelper.initiateShutdown(promise: nil)
