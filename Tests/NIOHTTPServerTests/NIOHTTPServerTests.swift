@@ -144,7 +144,7 @@ struct NIOHTTPServerTests {
                 serverHandler: HTTPServerClosureRequestHandler { request, requestContext, reader, responseWriter in
                     #expect(request == .makeRequest(method: .post, for: httpVersion))
 
-                    let peerChain = try #require(try await requestContext.peerCertificateChain)
+                    let peerChain = try #require(requestContext.peerCertificateChain)
                     #expect(Array(peerChain) == [clientLeaf])
 
                     let testData = ByteBuffer.testData

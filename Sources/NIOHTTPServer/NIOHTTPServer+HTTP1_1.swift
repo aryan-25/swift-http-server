@@ -83,7 +83,7 @@ extension NIOHTTPServer {
                     httpVersion: .plaintextHTTP1_1,
                     remoteAddress: try? NIOHTTPServer.SocketAddress(requestChannel.channel.remoteAddress),
                     localAddress: try? NIOHTTPServer.SocketAddress(requestChannel.channel.localAddress),
-                    peerCertificateChainFuture: nil
+                    peerCertificateChain: nil
                 )
                 let connection = Connection(
                     server: self,
