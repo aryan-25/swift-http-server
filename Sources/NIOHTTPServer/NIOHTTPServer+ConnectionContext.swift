@@ -56,18 +56,18 @@ extension NIOHTTPServer {
         /// The peer's validated certificate chain. Returns `nil` if a custom verification callback was not set when
         /// configuring mTLS in the server configuration, or if the custom verification callback did not return the
         /// derived validated chain.
-        public var peerCertificateChain: X509.ValidatedCertificateChain?
+        public var validatedPeerCertificateChain: X509.ValidatedCertificateChain?
 
         init(
             httpVersion: HTTPVersion,
             remoteAddress: NIOHTTPServer.SocketAddress? = nil,
             localAddress: NIOHTTPServer.SocketAddress? = nil,
-            peerCertificateChain: X509.ValidatedCertificateChain? = nil
+            validatedPeerCertificateChain: X509.ValidatedCertificateChain? = nil
         ) {
             self.httpVersion = httpVersion
             self.remoteAddress = remoteAddress
             self.localAddress = localAddress
-            self.peerCertificateChain = peerCertificateChain
+            self.validatedPeerCertificateChain = validatedPeerCertificateChain
         }
     }
 }

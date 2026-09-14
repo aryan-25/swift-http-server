@@ -66,9 +66,9 @@ extension NIOHTTPServer.RequestContext: HTTPServerCapability.PeerCertificate {
     ///
     /// Returns `nil` when mTLS is not configured, or when the configured custom verification callback did not return
     /// the derived validated chain.
-    public var peerCertificateChain: X509.ValidatedCertificateChain? {
+    public var validatedPeerCertificateChain: X509.ValidatedCertificateChain? {
         get {
-            self.connectionContext.peerCertificateChain
+            self.connectionContext.validatedPeerCertificateChain
         }
     }
 }

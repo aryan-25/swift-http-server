@@ -39,7 +39,7 @@ extension NIOHTTPServer {
         }
 
         let channel: NegotiatedChannel
-        let peerCertificateChain: X509.ValidatedCertificateChain?
+        let validatedPeerCertificateChain: X509.ValidatedCertificateChain?
     }
 
     /// Serves incoming connections. Each connection undergoes ALPN negotiation to determine whether to use HTTP/1.1 or
@@ -109,7 +109,7 @@ extension NIOHTTPServer {
                         httpVersion: .http1_1,
                         remoteAddress: try? NIOHTTPServer.SocketAddress(requestChannel.channel.remoteAddress),
                         localAddress: try? NIOHTTPServer.SocketAddress(requestChannel.channel.localAddress),
-                        peerCertificateChain: result.peerCertificateChain
+                        validatedPeerCertificateChain: result.validatedPeerCertificateChain
                     )
                     let connection = Connection(
                         server: self,
@@ -139,7 +139,7 @@ extension NIOHTTPServer {
         case .http2(let connectionChannel, let multiplexer):
             let context = NIOHTTPServer.makeHTTP2ConnectionContext(
                 connectionChannel: connectionChannel,
-                peerCertificateChain: result.peerCertificateChain
+                validatedPeerCertificateChain: result.validatedPeerCertificateChain
             )
             let connection = Connection(
                 server: self,
@@ -162,13 +162,13 @@ extension NIOHTTPServer {
     /// Builds a ``ConnectionContext`` for an HTTP/2 connection channel.
     static func makeHTTP2ConnectionContext(
         connectionChannel: any Channel,
-        peerCertificateChain: X509.ValidatedCertificateChain?
+        validatedPeerCertificateChain: X509.ValidatedCertificateChain?
     ) -> ConnectionContext {
         ConnectionContext(
             httpVersion: .http2,
             remoteAddress: try? NIOHTTPServer.SocketAddress(connectionChannel.remoteAddress),
             localAddress: try? NIOHTTPServer.SocketAddress(connectionChannel.localAddress),
-            peerCertificateChain: peerCertificateChain
+            validatedPeerCertificateChain: validatedPeerCertificateChain
         )
     }
 
@@ -367,7 +367,7 @@ extension NIOHTTPServer {
                 ).map { channel in
                     NegotiationResult(
                         channel: .http1_1(channel),
-                        peerCertificateChain: channel.channel.extractPeerCertificateChain(logger: self.logger)
+                        validatedPeerCertificateChain: channel.channel.extractPeerCertificateChain(logger: self.logger)
                     )
                 }
 
@@ -378,7 +378,7 @@ extension NIOHTTPServer {
                 ).map { (channel, streamMultiplexer) in
                     NegotiationResult(
                         channel: .http2(channel, streamMultiplexer),
-                        peerCertificateChain: channel.extractPeerCertificateChain(logger: self.logger)
+                        validatedPeerCertificateChain: channel.extractPeerCertificateChain(logger: self.logger)
                     )
                 }
 
