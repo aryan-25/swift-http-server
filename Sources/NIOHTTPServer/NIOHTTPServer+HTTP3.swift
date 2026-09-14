@@ -147,9 +147,7 @@ extension NIOHTTPServer {
         addressContinuation: AsyncThrowingStream<NIOCore.SocketAddress, any Error>.Continuation,
         connectionHandler: Handler
     ) {
-        let eventLoopExecutor = eventLoop.executor as? any TaskExecutor
-
-        group.addTask(name: "HTTP/3 over \(address) on \(eventLoop)", executorPreference: eventLoopExecutor) {
+        group.addTask(name: "HTTP/3 over \(address) on \(eventLoop)") {
             try await self.withHTTP3Channel(
                 address: address,
                 eventLoop: eventLoop,
