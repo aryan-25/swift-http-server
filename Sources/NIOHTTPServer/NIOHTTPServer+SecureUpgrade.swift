@@ -271,7 +271,7 @@ extension NIOHTTPServer {
                 connectionManagerConfiguration: .init(
                     maxIdleTime: self.configuration.connectionTimeouts.idle.map { TimeAmount($0) },
                     maxAge: nil,
-                    maxGraceTime: configuration.gracefulShutdown.maximumGracefulShutdownDuration
+                    maxGraceTime: self.configuration.gracefulShutdown.maximumGracefulShutdownDuration
                         .map { TimeAmount($0) },
                     keepalive: nil
                 ),

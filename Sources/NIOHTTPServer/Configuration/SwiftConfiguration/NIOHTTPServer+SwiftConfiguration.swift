@@ -47,6 +47,15 @@ extension NIOHTTPServerConfiguration {
     ///
     /// - **`"backpressureStrategy"`**: The backpressure strategy (see ``BackPressureStrategy/init(config:)``).
     ///
+    /// - **`"maxConnections"`** (int, optional, default: nil): The maximum number of concurrent connections the server
+    ///   will accept. When omitted, no limit is imposed.
+    ///
+    /// - **`"connectionTimeouts"`**: The idle, header read, and body read timeouts applied to connections (see
+    ///   ``ConnectionTimeouts/init(config:)``).
+    ///
+    /// - **`"gracefulShutdown"`**: The graceful shutdown behavior of connections (see
+    ///   ``GracefulShutdownConfiguration/init(config:)``).
+    ///
     /// - Parameters:
     ///   - config: The configuration reader to read configuration values from.
     ///   - customCertificateVerificationCallback: A custom client certificate verification callback. This must be
@@ -80,6 +89,7 @@ extension NIOHTTPServerConfiguration {
         self.backpressureStrategy = .init(config: snapshot.scoped(to: "backpressureStrategy"))
         self.maxConnections = snapshot.int(forKey: "maxConnections")
         self.connectionTimeouts = .init(config: snapshot.scoped(to: "connectionTimeouts"))
+        self.gracefulShutdown = .init(config: snapshot.scoped(to: "gracefulShutdown"))
     }
 
     /// Reads bind targets from either the singular `bindTarget` scope or the plural `bindTargets` scope.
@@ -493,4 +503,19 @@ extension NIOHTTPServerConfiguration.ConnectionTimeouts {
     }
 }
 
+@available(anyAppleOS 26.0, *)
+extension NIOHTTPServerConfiguration.GracefulShutdownConfiguration {
+    /// Initialize a graceful shutdown configuration from a config reader.
+    ///
+    /// ## Configuration keys:
+    /// - `maximumDuration` (int, optional, default: nil): The maximum amount of time (in seconds) that the connection
+    ///   has to close gracefully.
+    ///
+    /// - Parameter config: The configuration reader.
+    public init(config: ConfigSnapshotReader) {
+        self.init(
+            maximumGracefulShutdownDuration: config.int(forKey: "maximumDuration").map { .seconds($0) }
+        )
+    }
+}
 #endif  // Configuration
