@@ -189,7 +189,7 @@ extension NIOHTTPServer {
                 let requestContext = RequestContext(connectionContext: context, channel: channel)
 
                 guard
-                    let recoveredIterator = await self.invokeHandler(
+                    let recoveredIterator = await self.invokeHTTP1Handler(
                         request: httpRequest,
                         requestContext: requestContext,
                         inboundIterator: iterator,

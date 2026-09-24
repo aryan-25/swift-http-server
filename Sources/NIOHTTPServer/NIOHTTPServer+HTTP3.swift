@@ -121,7 +121,7 @@ extension NIOHTTPServer {
                         }
                         #endif  // UnstableHTTPDatagrams
 
-                        _ = await self.invokeHandler(
+                        await self.invokeHandler(
                             request: request,
                             requestContext: context,
                             inboundIterator: inboundIterator,

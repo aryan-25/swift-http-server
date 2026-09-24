@@ -20,31 +20,50 @@ import Synchronization
 @available(anyAppleOS 26.0, *)
 extension NIOHTTPServer {
     public struct Reader: AsyncReader, ~Copyable {
-        final class ReaderState: Sendable {
-            struct Wrapped: ~Copyable {
-                var finishedReading: Bool = false
+        typealias Iterator = NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator
 
-                /// The iterator. Initially populated from the channel; taken by the
-                /// body reader at construction time and returned by it once request
-                /// `.end` has been observed (for HTTP/1.1 keep-alive recovery).
-                var iterator:
-                    Disconnected<
-                        NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator?
-                    >
+        /// A box holding the iterator. We take the iterator out at the start and put it back once we see the request
+        /// `.end` so that the outer request loop can reuse it for HTTP/1.1 keep-alive.
+        final class IteratorBox: Sendable {
+            fileprivate let iterator: Mutex<Disconnected<Iterator?>>
+
+            init(iterator: consuming sending Iterator) {
+                self.iterator = .init(Disconnected(value: iterator))
             }
 
-            let wrapped: Mutex<Wrapped>
-
-            init(iterator: consuming sending NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator) {
-                self.wrapped = .init(.init(iterator: Disconnected(value: iterator)))
+            /// Takes the iterator out of the box. Returns `nil` if it has already been taken.
+            func take() -> sending Iterator? {
+                self.iterator.withLock { $0.swap(newValue: nil) }
             }
+        }
 
-            /// Takes the iterator out of the state. Returns the iterator if present,
-            /// or `nil` if it's already been taken (e.g. by the body reader).
-            func takeIterator() -> sending NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator? {
-                self.wrapped.withLock { state in
-                    state.iterator.swap(newValue: nil)
-                }
+        /// The iterator that yields HTTP request parts.
+        enum RequestPartIterator {
+            /// For HTTP/2 and HTTP/3: we take the iterator and drop it after we see the request `.end`.
+            case singleUse(Iterator)
+
+            /// For HTTP/1: we take the iterator from the box and put it back after we see the request `.end`, so the
+            /// connection can be reused for the next request.
+            case reusable(IteratorBox)
+        }
+
+        /// The reader's state.
+        enum State: ~Copyable {
+            /// We are reading request body part(s) and waiting for the request `.end`.
+            case reading(Reading)
+
+            /// We have seen the request `.end` part.
+            case finished
+
+            /// The underlying stream ended or threw an error before request `.end` was observed.
+            case failed(any Error)
+
+            struct Reading: ~Copyable {
+                var iterator: Iterator
+
+                /// The box to put the iterator back into once we see the request `.end`, or `nil` if the iterator is
+                /// single-use.
+                var returnTo: IteratorBox?
             }
         }
 
@@ -56,23 +75,26 @@ extension NIOHTTPServer {
 
         public typealias ReadFailure = any Error
 
-        var state: ReaderState
-
-        /// The iterator that provides HTTP request parts from the underlying channel.
-        /// Taken from `state` at construction; returned to `state` when this reader
-        /// observes request `.end` so the outer request loop can recover it for
-        /// HTTP/1.1 keep-alive.
-        private var iterator: NIOAsyncChannelInboundStream<HTTPRequestPart>.AsyncIterator?
+        private var state: State
 
         /// A reusable buffer handed to the body closure on each call to ``read(body:)``.
         /// Reusing it across calls preserves the allocation; the buffer is cleared
         /// (while keeping its capacity) at the start of every read.
         private var buffer: UniqueArray<UInt8>
 
-        /// Initializes a new request body reader, taking the iterator from the shared `ReaderState`.
-        init(readerState: ReaderState) {
-            self.state = readerState
-            self.iterator = readerState.takeIterator()
+        /// Initializes a new request body reader.
+        init(requestPartIterator: consuming sending RequestPartIterator) {
+            switch requestPartIterator {
+            case .singleUse(let iterator):
+                self.state = .reading(.init(iterator: iterator, returnTo: nil))
+
+            case .reusable(let box):
+                guard let iterator = box.take() else {
+                    preconditionFailure("The request iterator was not present in the IteratorBox.")
+                }
+
+                self.state = .reading(.init(iterator: iterator, returnTo: box))
+            }
             self.buffer = UniqueArray<UInt8>()
         }
 
@@ -83,10 +105,11 @@ extension NIOHTTPServer {
 
         /// Initializes a new request body reader that can also vend an unreliable datagram reader if the underlying
         /// transport supports unreliable datagrams.
-        init(readerState: ReaderState, datagramStreamFuture: EventLoopFuture<HTTP3UnreliableDatagramStream>? = nil) {
-            self.state = readerState
-            self.iterator = readerState.takeIterator()
-            self.buffer = UniqueArray<UInt8>()
+        init(
+            requestPartIterator: consuming sending RequestPartIterator,
+            datagramStreamFuture: EventLoopFuture<HTTP3UnreliableDatagramStream>?
+        ) {
+            self.init(requestPartIterator: requestPartIterator)
             self.datagramStreamFuture = datagramStreamFuture
         }
         #endif
@@ -94,9 +117,9 @@ extension NIOHTTPServer {
         public mutating func read<Return: ~Copyable, Failure: Error>(
             body: (inout Buffer, consuming HTTPFields??) async throws(Failure) -> Return
         ) async throws(EitherError<ReadFailure, Failure>) -> Return {
-            let requestPart: HTTPRequestPart?
+            let requestPart: HTTPRequestPart
             do {
-                requestPart = try await self.iterator?.next(isolation: #isolation)
+                requestPart = try await self.state.nextRequestPart(isolation: #isolation)
             } catch {
                 throw .first(error)
             }
@@ -111,17 +134,7 @@ extension NIOHTTPServer {
                 self.buffer.append(copying: element.readableBytesUInt8Span)
                 trailerFields = nil
             case .end(let trailer):
-                // Move the iterator back into ReaderState so the outer request
-                // loop can recover it for the next request on the same connection
-                // (HTTP/1.1 keep-alive).
-                nonisolated(unsafe) let iter = self.iterator.take()
-                self.state.wrapped.withLock { state in
-                    state.finishedReading = true
-                    _ = unsafe state.iterator.swap(newValue: iter)
-                }
                 trailerFields = trailer
-            case .none:
-                throw .first(RequestBodyReadError.streamEndedBeforeReceivingRequestEnd)
             }
 
             do {
@@ -129,6 +142,65 @@ extension NIOHTTPServer {
             } catch {
                 throw .second(error)
             }
+        }
+    }
+}
+
+@available(anyAppleOS 26.0, *)
+extension NIOHTTPServer.Reader.State {
+    /// Reads the next request part from the iterator, and transitions the state accordingly.
+    ///
+    /// - Throws:
+    ///   - ``RequestBodyReadError/readAfterRequestEnd`` if request `.end` has already been seen;
+    ///   - ``RequestBodyReadError/streamEnded`` if the stream ends before request `.end`;
+    ///   - or, the error thrown by the iterator.
+    ///
+    ///    Once in the failed state, every subsequent call rethrows the same error.
+    mutating func nextRequestPart(isolation actor: isolated (any Actor)?) async throws -> HTTPRequestPart {
+        switch consume self {
+        case .reading(var reading):
+            let requestPart: HTTPRequestPart?
+            do {
+                requestPart = try await reading.iterator.next(isolation: actor)
+            } catch {
+                self = .failed(error)
+                throw error
+            }
+
+            guard let requestPart else {
+                // The stream ended before we got a request end part.
+                self = .failed(RequestBodyReadError.streamEnded)
+
+                throw RequestBodyReadError.streamEnded
+            }
+
+            switch requestPart {
+            case .head:
+                // The head part should have already been read from the iterator before it was given to `Reader`.
+                fatalError()
+
+            case .body:
+                self = .reading(reading)
+
+            case .end:
+                self = .finished
+
+                if let box = reading.returnTo {
+                    // Move the iterator back into the box so the outer request loop can recover it for the next request
+                    // on the same connection (HTTP/1.1 keep-alive).
+                    nonisolated(unsafe) let iterator: NIOHTTPServer.Reader.Iterator? = (consume reading).iterator
+                    box.iterator.withLock { _ = unsafe $0.swap(newValue: iterator) }
+                }
+            }
+            return requestPart
+
+        case .finished:
+            self = .finished
+            throw RequestBodyReadError.readAfterRequestEnd
+
+        case .failed(let error):
+            self = .failed(error)
+            throw error
         }
     }
 }
