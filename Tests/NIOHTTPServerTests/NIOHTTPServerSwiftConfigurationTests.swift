@@ -314,7 +314,6 @@ struct NIOHTTPServerSwiftConfigurationTests {
             #expect(http2.maxFrameSize == NIOHTTPServerConfiguration.HTTP2.defaultMaxFrameSize)
             #expect(http2.targetWindowSize == NIOHTTPServerConfiguration.HTTP2.defaultTargetWindowSize)
             #expect(http2.maxConcurrentStreams == 100)
-            #expect(http2.gracefulShutdown == .init(maximumGracefulShutdownDuration: nil))
         }
 
         @Test("Custom values")
@@ -324,7 +323,6 @@ struct NIOHTTPServerSwiftConfigurationTests {
                 "maxFrameSize": 1,
                 "targetWindowSize": 2,
                 "maxConcurrentStreams": 3,
-                "gracefulShutdown.maximumDuration": 4,
             ])
             let config = ConfigReader(provider: provider)
             let snapshot = config.snapshot()
@@ -334,7 +332,6 @@ struct NIOHTTPServerSwiftConfigurationTests {
             #expect(http2.maxFrameSize == 1)
             #expect(http2.targetWindowSize == 2)
             #expect(http2.maxConcurrentStreams == 3)
-            #expect(http2.gracefulShutdown.maximumGracefulShutdownDuration == .seconds(4))
         }
 
         @Test("Partial custom values")
@@ -349,7 +346,6 @@ struct NIOHTTPServerSwiftConfigurationTests {
             #expect(http2.maxFrameSize == 5)
             #expect(http2.targetWindowSize == NIOHTTPServerConfiguration.HTTP2.defaultTargetWindowSize)
             #expect(http2.maxConcurrentStreams == 100)
-            #expect(http2.gracefulShutdown.maximumGracefulShutdownDuration == nil)
         }
     }
 
@@ -1144,6 +1140,32 @@ struct NIOHTTPServerSwiftConfigurationTests {
         }
     }
 
+    @Suite("GracefulShutdownConfiguration")
+    struct GracefulShutdownConfigurationTests {
+        @available(anyAppleOS 26.0, *)
+        @Test("Default value") func defaultValue() {
+            let provider = InMemoryProvider(values: [:])
+            let config = ConfigReader(provider: provider)
+            let snapshot = config.snapshot()
+
+            let gracefulShutdown = NIOHTTPServerConfiguration.GracefulShutdownConfiguration(config: snapshot)
+
+            #expect(gracefulShutdown == .defaults)
+            #expect(gracefulShutdown.maximumGracefulShutdownDuration == nil)
+        }
+
+        @available(anyAppleOS 26.0, *)
+        @Test("Custom value") func customValue() {
+            let provider = InMemoryProvider(values: ["maximumDuration": 42])
+            let config = ConfigReader(provider: provider)
+            let snapshot = config.snapshot()
+
+            let gracefulShutdown = NIOHTTPServerConfiguration.GracefulShutdownConfiguration(config: snapshot)
+
+            #expect(gracefulShutdown.maximumGracefulShutdownDuration == .seconds(42))
+        }
+    }
+
     @Suite("End-to-End")
     struct EndToEndConfigurationTests {
         @Test("Configure all possible values")
@@ -1161,7 +1183,7 @@ struct NIOHTTPServerSwiftConfigurationTests {
                     "http.http2.maxFrameSize": 1,
                     "http.http2.targetWindowSize": 2,
                     "http.http2.maxConcurrentStreams": 3,
-                    "http.http2.gracefulShutdown.maximumDuration": 4,
+                    "gracefulShutdown.maximumDuration": 4,
                     "transportSecurity.mode": .init(.string("mTLS"), isSecret: false),
                     "transportSecurity.credentialSource": .init(.string("inline"), isSecret: false),
                     "transportSecurity.certificateChainPEMString": .init(.string(certsPEM), isSecret: false),
@@ -1187,12 +1209,10 @@ struct NIOHTTPServerSwiftConfigurationTests {
             #expect(serverConfig.supportedHTTPVersions.contains(.http1_1))
             #expect(
                 serverConfig.supportedHTTPVersions.http2ConfigIfSupported
-                    == .init(
-                        maxFrameSize: 1,
-                        targetWindowSize: 2,
-                        maxConcurrentStreams: 3,
-                        gracefulShutdown: .init(maximumGracefulShutdownDuration: .seconds(4))
-                    )
+                    == .init(maxFrameSize: 1, targetWindowSize: 2, maxConcurrentStreams: 3)
+            )
+            #expect(
+                serverConfig.gracefulShutdown == .init(maximumGracefulShutdownDuration: .seconds(4))
             )
 
             guard case .mTLS(let tlsCredentials, let trustConfig) = serverConfig.transportSecurity.backing else {

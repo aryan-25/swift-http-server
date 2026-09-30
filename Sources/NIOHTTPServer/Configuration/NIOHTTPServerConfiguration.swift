@@ -137,42 +137,19 @@ public struct NIOHTTPServerConfiguration: Sendable {
         /// The number of concurrent streams on the HTTP/2 connection.
         public var maxConcurrentStreams: Int
 
-        /// The graceful shutdown configuration.
-        public var gracefulShutdown: GracefulShutdownConfiguration
-
-        /// Configuration options for HTTP/2 graceful shutdown behavior.
-        public struct GracefulShutdownConfiguration: Sendable, Hashable {
-            /// The maximum amount of time that the connection has to close gracefully.
-            /// If set to `nil`, no time limit is enforced on the graceful shutdown process.
-            public var maximumGracefulShutdownDuration: Duration?
-
-            /// Creates a graceful shutdown configuration with the specified timeout value.
-            ///
-            /// - Parameters:
-            ///   - maximumGracefulShutdownDuration: The maximum amount of time that the connection has to close
-            ///     gracefully. When `nil`, no time limit is enforced for active streams to finish during graceful
-            ///     shutdown.
-            public init(maximumGracefulShutdownDuration: Duration? = nil) {
-                self.maximumGracefulShutdownDuration = maximumGracefulShutdownDuration
-            }
-        }
-
         /// - Parameters:
         ///   - maxFrameSize: The maximum frame size to be used in connections.
         ///   - targetWindowSize: The target window size for connections. This will also be set as the initial window
         ///     size.
         ///   - maxConcurrentStreams: The maximum number of concurrent streams permitted on connections.
-        ///   - gracefulShutdown: The graceful shutdown configuration.
         public init(
             maxFrameSize: Int = Self.defaultMaxFrameSize,
             targetWindowSize: Int = Self.defaultTargetWindowSize,
-            maxConcurrentStreams: Int = Self.defaultMaxConcurrentStreams,
-            gracefulShutdown: GracefulShutdownConfiguration = .init()
+            maxConcurrentStreams: Int = Self.defaultMaxConcurrentStreams
         ) {
             self.maxFrameSize = maxFrameSize
             self.targetWindowSize = targetWindowSize
             self.maxConcurrentStreams = maxConcurrentStreams
-            self.gracefulShutdown = gracefulShutdown
         }
 
         @inlinable
@@ -190,8 +167,7 @@ public struct NIOHTTPServerConfiguration: Sendable {
             Self(
                 maxFrameSize: Self.defaultMaxFrameSize,
                 targetWindowSize: Self.defaultTargetWindowSize,
-                maxConcurrentStreams: Self.defaultMaxConcurrentStreams,
-                gracefulShutdown: GracefulShutdownConfiguration()
+                maxConcurrentStreams: Self.defaultMaxConcurrentStreams
             )
         }
     }
@@ -288,6 +264,30 @@ public struct NIOHTTPServerConfiguration: Sendable {
         public static var defaults: Self { .init() }
     }
 
+    /// Configuration options for graceful shutdown behavior.
+    public struct GracefulShutdownConfiguration: Sendable, Hashable {
+        /// The maximum amount of time that the connection has to close gracefully before being forcefully closed.
+        /// If set to `nil`, no time limit is enforced for the connection to close gracefully.
+        public var maximumGracefulShutdownDuration: Duration?
+
+        /// Creates a graceful shutdown configuration with the specified timeout value.
+        ///
+        /// - Parameters:
+        ///   - maximumGracefulShutdownDuration: The maximum amount of time that the connection has to close gracefully.
+        ///     If set to `nil`, no time limit is enforced for the connection to close gracefully.
+        public init(maximumGracefulShutdownDuration: Duration? = nil) {
+            self.maximumGracefulShutdownDuration = maximumGracefulShutdownDuration
+        }
+
+        /// The default graceful shutdown configuration.
+        ///
+        /// Uses the following default values:
+        /// - ``maximumGracefulShutdownDuration``: `nil` (no time limit enforced for the connection to close gracefully).
+        public static var defaults: Self {
+            Self(maximumGracefulShutdownDuration: nil)
+        }
+    }
+
     /// Network binding configuration specifying all addresses where the server should listen.
     ///
     /// - Precondition: Must not be empty.
@@ -361,6 +361,9 @@ public struct NIOHTTPServerConfiguration: Sendable {
     /// Configuration for connection timeouts.
     public var connectionTimeouts: ConnectionTimeouts
 
+    /// The graceful shutdown configuration.
+    public var gracefulShutdown: GracefulShutdownConfiguration
+
     /// The `NIOSSLContext` used by the secure upgrade channel(s), derived when the configuration is validated.
     ///
     /// `nil` when the configuration doesn't call for a secure upgrade channel, i.e. plaintext HTTP/1.1 or HTTP/3 only.
@@ -381,9 +384,9 @@ public struct NIOHTTPServerConfiguration: Sendable {
 
     /// Create a new configuration with multiple bind targets.
     ///
-    /// Other configuration properties (``backpressureStrategy``, ``maxConnections``,
-    /// ``connectionTimeouts``) are initialized to their defaults and can be set on the resulting
-    /// value before passing it to ``NIOHTTPServer``.
+    /// Other configuration properties (``backpressureStrategy``, ``maxConnections``, ``connectionTimeouts``,
+    /// ``gracefulShutdown``) are initialized to their defaults and can be set on the resulting value before passing it
+    /// to ``NIOHTTPServer``.
     ///
     /// - Parameters:
     ///   - bindTargets: An array of ``BindTarget`` values specifying where the server should listen.
@@ -408,6 +411,7 @@ public struct NIOHTTPServerConfiguration: Sendable {
         self.backpressureStrategy = .defaults
         self.maxConnections = nil
         self.connectionTimeouts = .defaults
+        self.gracefulShutdown = .defaults
 
         // Validate the compatibility of `supportedHTTPVersions` and `transportSecurity`.
         try self.validateTransportConfiguration()
@@ -415,9 +419,9 @@ public struct NIOHTTPServerConfiguration: Sendable {
 
     /// Create a new configuration with a single bind target.
     ///
-    /// Other configuration properties (``backpressureStrategy``, ``maxConnections``,
-    /// ``connectionTimeouts``) are initialized to their defaults and can be set on the resulting
-    /// value before passing it to ``NIOHTTPServer``.
+    /// Other configuration properties (``backpressureStrategy``, ``maxConnections``, ``connectionTimeouts``,
+    /// ``gracefulShutdown``) are initialized to their defaults and can be set on the resulting value before passing it
+    /// to ``NIOHTTPServer``.
     ///
     /// - Parameters:
     ///   - bindTarget: A ``BindTarget``.
