@@ -106,112 +106,10 @@ extension NIOHTTPServer {
         }
     }
 
-    /// Holds the request reader and response sender for a single request-response exchange. Both the reader and writer
-    /// share the same exchange state.
-    struct ExchangeCoordinator: ~Copyable {
-        /// The state shared by the exchange's reader and response sender.
-        let state: ExchangeState
-
-        private let requestIterator: Disconnected<Reader.Iterator>
-        private let requestHandle: ExchangeState.RequestHandle
-
-        private let responseWriter: NIOAsyncChannelOutboundWriter<HTTPResponsePart>
-        private let responseHandle: ExchangeState.ResponseHandle
-
-        #if HTTP3 && UnstableHTTPDatagrams
-        private var datagramStreamFuture: EventLoopFuture<HTTP3UnreliableDatagramStream>?
-        #endif
-
-        /// A factory method for a request-response exchange where the iterator is moved back into the provided
-        /// `exchangeState` after the exchange has finished so that the connection can be re-used for another exchange.
-        ///
-        /// - Parameters:
-        ///   - requestIterator: The iterator that yields HTTP request parts (after the request head).
-        ///   - responseWriter: The writer for HTTP response parts.
-        ///   - state: The connection's exchange state.
-        fileprivate static func reusable(
-            requestIterator: consuming sending Reader.Iterator,
-            responseWriter: NIOAsyncChannelOutboundWriter<HTTPResponsePart>,
-            state: ExchangeState
-        ) -> ExchangeCoordinator {
-            assert(!state.finishedReading && !state.finishedWriting, "Exchange state wasn't reset")
-            return ExchangeCoordinator(
-                state: state,
-                requestIterator: Disconnected(value: requestIterator),
-                requestHandle: .reusable(state: state),
-                responseWriter: responseWriter,
-                responseHandle: .init(state: state)
-            )
-        }
-
-        /// A factory method for an HTTP/2 or HTTP/3 request-response exchange.
-        ///
-        /// - Parameters:
-        ///   - requestIterator: The iterator that yields HTTP request parts (after the request head).
-        ///   - responseWriter: The writer for HTTP response parts.
-        static func singleUse(
-            requestIterator: consuming sending Reader.Iterator,
-            responseWriter: NIOAsyncChannelOutboundWriter<HTTPResponsePart>
-        ) -> ExchangeCoordinator {
-            let state = ExchangeState()
-            return ExchangeCoordinator(
-                state: state,
-                requestIterator: Disconnected(value: requestIterator),
-                requestHandle: .singleUse(state: state),
-                responseWriter: responseWriter,
-                responseHandle: .init(state: state)
-            )
-        }
-
-        #if HTTP3 && UnstableHTTPDatagrams
-        /// A factory method for an exchange with its own state, whose reader and response sender can also vend
-        /// unreliable datagram readers and writers (if the underlying transport supports unreliable datagrams).
-        static func singleUse(
-            requestIterator: consuming sending Reader.Iterator,
-            responseWriter: NIOAsyncChannelOutboundWriter<HTTPResponsePart>,
-            datagramStreamFuture: EventLoopFuture<HTTP3UnreliableDatagramStream>?
-        ) -> ExchangeCoordinator {
-            let state = ExchangeState()
-            return ExchangeCoordinator(
-                state: state,
-                requestIterator: Disconnected(value: requestIterator),
-                requestHandle: .singleUse(state: state),
-                responseWriter: responseWriter,
-                responseHandle: .init(state: state),
-                datagramStreamFuture: datagramStreamFuture
-            )
-        }
-        #endif
-
-        /// Makes the exchange's request reader and response sender, and passes them to `body`.
-        consuming func withReaderAndResponseSender<Result, Failure: Error>(
-            _ body: (consuming sending Reader, consuming sending ResponseSender) async throws(Failure) -> Result
-        ) async throws(Failure) -> Result {
-            #if HTTP3 && UnstableHTTPDatagrams
-            try await body(
-                Reader(
-                    iterator: self.requestIterator.take(),
-                    exchangeState: self.requestHandle,
-                    datagramStreamFuture: self.datagramStreamFuture
-                ),
-                ResponseSender(
-                    writer: self.responseWriter,
-                    exchangeState: self.responseHandle,
-                    datagramStreamFuture: self.datagramStreamFuture
-                )
-            )
-            #else
-            try await body(
-                Reader(iterator: self.requestIterator.take(), exchangeState: self.requestHandle),
-                ResponseSender(writer: self.responseWriter, exchangeState: self.responseHandle)
-            )
-            #endif
-        }
-    }
-
     /// Coordinates the re-use of an HTTP/1.1 connection.
     struct HTTP1ConnectionReuseCoordinator: ~Copyable {
-        private let state = ExchangeState()
+        /// The state shared by every request-response exchange on the connection.
+        let state = ExchangeState()
 
         private var requestIterator: Disconnected<Reader.Iterator?>
         private let responseWriter: NIOAsyncChannelOutboundWriter<HTTPResponsePart>
@@ -244,15 +142,21 @@ extension NIOHTTPServer {
             return requestHead
         }
 
-        /// Makes the exchange coordinator for the request whose head was just read.
+        /// Makes the request reader for the next exchange on the connection.
         ///
         /// - Precondition: No exchange is in progress.
-        mutating func makeExchangeCoordinator() -> ExchangeCoordinator {
+        mutating func makeReader() -> sending Reader {
             guard let iterator = self.requestIterator.swap(newValue: nil) else {
                 preconditionFailure("An exchange is in progress")
             }
 
-            return .reusable(requestIterator: iterator, responseWriter: self.responseWriter, state: self.state)
+            assert(!self.state.finishedReading && !self.state.finishedWriting, "Exchange state wasn't reset")
+            return Reader(iterator: iterator, exchangeState: .reusable(state: self.state))
+        }
+
+        /// Makes the response sender for the next exchange on the connection.
+        func makeResponseSender() -> sending ResponseSender {
+            ResponseSender(writer: self.responseWriter, exchangeState: .init(state: self.state))
         }
 
         /// Recovers the iterator from the exchange state so that the connection can be re-used for the next request.

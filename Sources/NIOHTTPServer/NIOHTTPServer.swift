@@ -303,13 +303,17 @@ public struct NIOHTTPServer: HTTPServer {
         )
     }
 
-    /// Shared core: invokes the request handler with the reader and response sender that `exchangeCoordinator` holds.
+    /// Shared core: invokes the request handler with the reader and response sender.
     ///
+    /// - Parameters:
+    ///   - exchangeState: The state shared by `requestReader` and `responseSender`.
     /// - Returns: `true` if the handler returned without throwing and concluded the response; `false` otherwise.
     private func invokeHandler<Handler: HTTPServerRequestHandler>(
         request: HTTPRequest,
         requestContext: RequestContext,
-        exchangeCoordinator: consuming sending ExchangeCoordinator,
+        exchangeState: ExchangeState,
+        requestReader: consuming sending Reader,
+        responseSender: consuming sending ResponseSender,
         handler: Handler
     ) async -> Bool
     where
@@ -317,20 +321,16 @@ public struct NIOHTTPServer: HTTPServer {
         Handler.Reader == Reader,
         Handler.ResponseSender == ResponseSender
     {
-        let exchangeState = exchangeCoordinator.state
-
         do {
             // Cancellation when the exchange ends is not handled here: what can end belongs to the
             // channel, not to this request, so the race lives at the level that owns the channel —
             // `handleHTTP1RequestLoop` and `handleStreamChannel`. See `ClientClosed.swift`.
-            try await exchangeCoordinator.withReaderAndResponseSender { reader, responseSender in
-                try await handler.handle(
-                    request: request,
-                    requestContext: requestContext,
-                    reader: reader,
-                    responseSender: responseSender
-                )
-            }
+            try await handler.handle(
+                request: request,
+                requestContext: requestContext,
+                reader: requestReader,
+                responseSender: responseSender
+            )
         } catch {
             // A throwing handler signals that the exchange failed. The error is deliberately not propagated to any
             // caller: it exists to drive the wire, aborting the exchange with protocol error codes the error can
@@ -376,12 +376,19 @@ public struct NIOHTTPServer: HTTPServer {
         Handler.Reader == Reader,
         Handler.ResponseSender == ResponseSender
     {
+        let exchangeState = ExchangeState()
         _ = await self.invokeHandler(
             request: request,
             requestContext: requestContext,
-            exchangeCoordinator: .singleUse(
-                requestIterator: inboundIterator,
-                responseWriter: outbound,
+            exchangeState: exchangeState,
+            requestReader: Reader(
+                iterator: inboundIterator,
+                exchangeState: .singleUse(state: exchangeState),
+                datagramStreamFuture: datagramStreamFuture
+            ),
+            responseSender: ResponseSender(
+                writer: outbound,
+                exchangeState: .init(state: exchangeState),
                 datagramStreamFuture: datagramStreamFuture
             ),
             handler: handler
@@ -402,10 +409,13 @@ public struct NIOHTTPServer: HTTPServer {
         Handler.Reader == Reader,
         Handler.ResponseSender == ResponseSender
     {
+        let exchangeState = ExchangeState()
         _ = await self.invokeHandler(
             request: request,
             requestContext: requestContext,
-            exchangeCoordinator: .singleUse(requestIterator: inboundIterator, responseWriter: outbound),
+            exchangeState: exchangeState,
+            requestReader: Reader(iterator: inboundIterator, exchangeState: .singleUse(state: exchangeState)),
+            responseSender: ResponseSender(writer: outbound, exchangeState: .init(state: exchangeState)),
             handler: handler
         )
     }
@@ -413,7 +423,7 @@ public struct NIOHTTPServer: HTTPServer {
     /// Invokes the request handler for an HTTP/1.1 request.
     ///
     /// - Parameters:
-    ///   - request: The request whose head was just read from `coordinator`.
+    ///   - request: The request whose head was just read from `reuseCoordinator`.
     ///   - reuseCoordinator: The connection's re-use coordinator.
     /// - Returns: Whether the connection can carry another request.
     func invokeHTTP1Handler<Handler: HTTPServerRequestHandler>(
@@ -427,12 +437,18 @@ public struct NIOHTTPServer: HTTPServer {
         Handler.Reader == Reader,
         Handler.ResponseSender == ResponseSender
     {
+        let exchangeState = reuseCoordinator.state
+        let requestReader = reuseCoordinator.makeReader()
+        let responseSender = reuseCoordinator.makeResponseSender()
+
         // If the handler failed or didn't conclude the response, the connection cannot be reused.
         guard
             await self.invokeHandler(
                 request: request,
                 requestContext: requestContext,
-                exchangeCoordinator: reuseCoordinator.makeExchangeCoordinator(),
+                exchangeState: exchangeState,
+                requestReader: requestReader,
+                responseSender: responseSender,
                 handler: handler
             )
         else {
