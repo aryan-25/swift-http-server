@@ -294,9 +294,9 @@ struct ConnectionBackpressureSwiftConfigurationTests {
             "transportSecurity.credentialSource": "file",
             "transportSecurity.certificateChainPEMPath": .init(.string(leafPath), isSecret: false),
             "transportSecurity.privateKeyPEMPath": .init(.string(keyPath), isSecret: true),
-            "tcpConnectionLimits.maxConnections": 10
+            "tcpConnectionLimits.maxConnections": 10,
         ])
-        let config =  ConfigReader(provider: provider)
+        let config = ConfigReader(provider: provider)
 
         #expect(throws: NIOHTTPServerConfigurationError.tcpConnectionLimitsRequireHTTP1OrHTTP2) {
             _ = try NIOHTTPServerConfiguration(config: config)
