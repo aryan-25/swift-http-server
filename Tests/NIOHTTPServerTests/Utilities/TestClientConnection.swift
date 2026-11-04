@@ -48,7 +48,7 @@ struct TestClientConnection {
         case http3(
             quicChannel: any Channel,
             connectionChannel: any Channel,
-            connection: HTTP3ClientConnection<Never, NIOQUIC.QUICStreamCreator>
+            connection: HTTP3ClientConnection
         )
         #endif
     }
@@ -244,7 +244,7 @@ extension TestClientConnection {
 
         #if HTTP3
         case (.http3, .some(let trustRootsPEMPath)):
-            let (quicChannel, connectionCreator) =
+            let (quicChannel, client) =
                 try await DatagramBootstrap(group: .singletonMultiThreadedEventLoopGroup).setupTestHTTP3Client(
                     logger: configuration.logger,
                     trustRootsPath: trustRootsPEMPath,
@@ -254,22 +254,10 @@ extension TestClientConnection {
                     additionalConnectionChannelInitializer: configuration.additionalConnectionChannelInitializer
                 )
 
-            let multiplexer = HTTP3ClientConnectionMultiplexer<
-                TestHTTP3SingleConnectionCreator, NIOQUIC.QUICStreamCreator
-            >(
-                eventLoop: quicChannel.eventLoop,
-                createNewConnection: connectionCreator
-            )
-
-            let h3Connection = try await multiplexer.concurrencyView.createConnection(
+            let (connectionChannel, h3Connection) = try await client.connect(
                 serverName: "127.0.0.1",
-                remoteAddress: .init(ipAddress: serverAddress.host, port: serverAddress.port),
-                inboundPushStreamInitializer: { _ in fatalError("Push streams not supported") }
+                remoteAddress: .init(ipAddress: serverAddress.host, port: serverAddress.port)
             )
-
-            let connectionChannel = try await quicChannel.eventLoop.flatSubmit {
-                connectionCreator.value.connectionChannelPromise.futureResult
-            }.get()
 
             connection = TestClientConnection(
                 connectionProtocol: .http3(
