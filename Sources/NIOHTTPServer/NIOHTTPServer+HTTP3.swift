@@ -392,10 +392,14 @@ extension NIOHTTPServer {
                 }
             },
             inboundStreamInitializer: { streamChannel in
-                streamChannel.parent!.pipeline.handler(type: HTTP3ConnectionHandler<NIOQUIC.QUICStreamCreator>.self)
-                    .flatMap { http3Handler in
-                        http3Handler.inboundStreamReceived(streamChannel)
-                    }
+                do {
+                    let http3Handler = try streamChannel.parent!.pipeline.syncOperations.handler(
+                        type: HTTP3ConnectionHandler<NIOQUIC.QUICStreamCreator>.self
+                    )
+                    return http3Handler.inboundStreamReceived(streamChannel)
+                } catch {
+                    return streamChannel.eventLoop.makeFailedFuture(error)
+                }
             },
             noMoreConnections: {
                 connectionsContinuation.finish()
